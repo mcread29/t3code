@@ -94,7 +94,7 @@ describe("ProjectOverview", () => {
     await screen.unmount();
   });
 
-  it("renders grouped goals and keeps completed standalone tasks collapsed by default", async () => {
+  it("defaults to the tasks tab and switches between tasks and goals", async () => {
     currentNativeApi = buildNativeApi({
       readFile: vi.fn().mockResolvedValue({
         relativePath: ".t3code/project-goals.json",
@@ -128,12 +128,54 @@ describe("ProjectOverview", () => {
 
     const screen = await mountOverview();
 
-    await expect.element(page.getByText("Launch beta")).toBeVisible();
-    await expect.element(page.getByText("Working")).toBeVisible();
+    await expect.element(page.getByRole("tab", { name: /Tasks 1/i })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
     await expect.element(page.getByText("Sweep dead code")).not.toBeVisible();
 
     await page.getByText("Done").click();
     await expect.element(page.getByText("Sweep dead code")).toBeVisible();
+
+    await page.getByRole("tab", { name: /Goals 1/i }).click();
+    await expect.element(page.getByRole("tab", { name: /Goals 1/i })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await expect.element(page.getByText("Launch beta")).toBeVisible();
+    await expect.element(page.getByText("High-level project outcomes with nested tasks.")).toBeVisible();
+    await expect.element(page.getByText("Sweep dead code")).not.toBeVisible();
+
+    await page.getByRole("tab", { name: /Tasks 1/i }).click();
+    await expect.element(page.getByRole("tab", { name: /Tasks 1/i })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await expect.element(page.getByText("Tasks that are not attached to a goal.")).toBeVisible();
+
+    await screen.unmount();
+  });
+
+  it("opens the standalone task dialog from the header while the goals tab is selected", async () => {
+    currentNativeApi = buildNativeApi({
+      readFile: vi.fn().mockResolvedValue({
+        relativePath: ".t3code/project-goals.json",
+        contents: JSON.stringify({
+          version: 1,
+          goals: [{ name: "Ship beta", status: "planning", tasks: [] }],
+          tasks: [],
+        }),
+      }),
+    });
+
+    const screen = await mountOverview();
+
+    await page.getByRole("tab", { name: /Goals 1/i }).click();
+    await page.getByRole("button", { name: "New Task" }).click();
+
+    await expect.element(page.getByRole("dialog")).toBeVisible();
+    await expect.element(page.getByRole("heading", { name: "New Task" })).toBeVisible();
+    await expect.element(page.getByLabelText("Title")).toBeVisible();
 
     await screen.unmount();
   });
