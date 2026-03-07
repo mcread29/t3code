@@ -1550,6 +1550,78 @@ describe("WebSocket Server", () => {
     );
   });
 
+  it("supports projects.readFile for an existing workspace file", async () => {
+    const workspace = makeTempDir("t3code-ws-read-file-");
+    fs.mkdirSync(path.join(workspace, ".t3code"), { recursive: true });
+    fs.writeFileSync(
+      path.join(workspace, ".t3code", "project-goals.json"),
+      '{"version":1,"goals":[],"tasks":[]}\n',
+      "utf8",
+    );
+
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const response = await sendRequest(ws, WS_METHODS.projectsReadFile, {
+      cwd: workspace,
+      relativePath: ".t3code/project-goals.json",
+    });
+
+    expect(response.error).toBeUndefined();
+    expect(response.result).toEqual({
+      relativePath: ".t3code/project-goals.json",
+      contents: '{"version":1,"goals":[],"tasks":[]}\n',
+    });
+  });
+
+  it("returns contents null for missing projects.readFile paths", async () => {
+    const workspace = makeTempDir("t3code-ws-read-file-missing-");
+
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const response = await sendRequest(ws, WS_METHODS.projectsReadFile, {
+      cwd: workspace,
+      relativePath: ".t3code/project-goals.json",
+    });
+
+    expect(response.error).toBeUndefined();
+    expect(response.result).toEqual({
+      relativePath: ".t3code/project-goals.json",
+      contents: null,
+    });
+  });
+
+  it("rejects projects.readFile paths outside the workspace root", async () => {
+    const workspace = makeTempDir("t3code-ws-read-file-reject-");
+
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const response = await sendRequest(ws, WS_METHODS.projectsReadFile, {
+      cwd: workspace,
+      relativePath: "../escape.md",
+    });
+
+    expect(response.result).toBeUndefined();
+    expect(response.error?.message).toContain("Workspace file path must stay within the project root.");
+  });
+
   it("rejects projects.writeFile paths outside the workspace root", async () => {
     const workspace = makeTempDir("t3code-ws-write-file-reject-");
 

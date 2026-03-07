@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "goals": [],
+  "tasks": [
+    {
+      "title": "test",
+      "description": "test",
+      "status": "planning",
+      "subtasks": []
+    }
+  ]
+}

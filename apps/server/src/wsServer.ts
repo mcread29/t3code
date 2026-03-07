@@ -152,11 +152,12 @@ function toPosixRelativePath(input: string): string {
   return input.replaceAll("\\", "/");
 }
 
-function resolveWorkspaceWritePath(params: {
+function resolveWorkspaceRelativePath(params: {
   workspaceRoot: string;
   relativePath: string;
   path: Path.Path;
 }): Effect.Effect<{ absolutePath: string; relativePath: string }, RouteRequestError> {
+  const normalizedWorkspaceRoot = params.path.resolve(params.workspaceRoot.trim());
   const normalizedInputPath = params.relativePath.trim();
   if (params.path.isAbsolute(normalizedInputPath)) {
     return Effect.fail(
@@ -166,9 +167,9 @@ function resolveWorkspaceWritePath(params: {
     );
   }
 
-  const absolutePath = params.path.resolve(params.workspaceRoot, normalizedInputPath);
+  const absolutePath = params.path.resolve(normalizedWorkspaceRoot, normalizedInputPath);
   const relativeToRoot = toPosixRelativePath(
-    params.path.relative(params.workspaceRoot, absolutePath),
+    params.path.relative(normalizedWorkspaceRoot, absolutePath),
   );
   if (
     relativeToRoot.length === 0 ||
@@ -726,7 +727,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.projectsWriteFile: {
         const body = stripRequestTag(request.body);
-        const target = yield* resolveWorkspaceWritePath({
+        const target = yield* resolveWorkspaceRelativePath({
           workspaceRoot: body.cwd,
           relativePath: body.relativePath,
           path,
@@ -748,6 +749,41 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           ),
         );
         return { relativePath: target.relativePath };
+      }
+
+      case WS_METHODS.projectsReadFile: {
+        const body = stripRequestTag(request.body);
+        const target = yield* resolveWorkspaceRelativePath({
+          workspaceRoot: body.cwd,
+          relativePath: body.relativePath,
+          path,
+        });
+        const exists = yield* fileSystem.exists(target.absolutePath).pipe(
+          Effect.mapError(
+            (cause) =>
+              new RouteRequestError({
+                message: `Failed to access workspace file: ${String(cause)}`,
+              }),
+          ),
+        );
+        if (!exists) {
+          return {
+            relativePath: target.relativePath,
+            contents: null,
+          };
+        }
+        const contents = yield* fileSystem.readFileString(target.absolutePath).pipe(
+          Effect.mapError(
+            (cause) =>
+              new RouteRequestError({
+                message: `Failed to read workspace file: ${String(cause)}`,
+              }),
+          ),
+        );
+        return {
+          relativePath: target.relativePath,
+          contents,
+        };
       }
 
       case WS_METHODS.shellOpenInEditor: {
