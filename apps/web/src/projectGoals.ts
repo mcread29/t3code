@@ -160,11 +160,39 @@ export function serializeProjectGoalsDocument(doc: ProjectGoalsDocument): string
 
 function groupItemsByStatus<TItem extends { status: ProjectGoalStatus }>(
   items: readonly TItem[],
+  statuses: readonly ProjectGoalStatus[] = PROJECT_GOAL_STATUS_ORDER,
 ): Array<ProjectGoalsGroup<TItem>> {
-  return PROJECT_GOAL_STATUS_ORDER.map((status) => ({
+  return statuses.map((status) => ({
     status,
     label: PROJECT_GOAL_STATUS_LABELS[status],
     items: items.filter((item) => item.status === status),
+  }));
+}
+
+export function projectTaskBoardStatuses(options?: {
+  includeArchived?: boolean;
+}): ProjectGoalStatus[] {
+  const boardStatuses: ProjectGoalStatus[] = ["planning", "scheduled", "working", "done"];
+
+  if (options?.includeArchived) {
+    return [...boardStatuses, "archived"];
+  }
+
+  return boardStatuses;
+}
+
+export function groupTaskItemsByStatus<TItem>(
+  items: readonly TItem[],
+  getStatus: (item: TItem) => ProjectGoalStatus,
+  options?: {
+    includeArchived?: boolean;
+  },
+): Array<ProjectGoalsGroup<TItem>> {
+  const statuses = projectTaskBoardStatuses(options);
+  return statuses.map((status) => ({
+    status,
+    label: PROJECT_GOAL_STATUS_LABELS[status],
+    items: items.filter((item) => getStatus(item) === status),
   }));
 }
 
@@ -178,11 +206,16 @@ export function groupGoalsByStatus(goals: readonly ProjectGoal[]): Array<Project
 
 export function groupStandaloneTasksByStatus(
   tasks: readonly ProjectTask[],
+  options?: {
+    includeArchived?: boolean;
+  },
 ): Array<ProjectGoalsGroup<ProjectTask>> {
-  return groupItemsByStatus(
+  return groupTaskItemsByStatus(
     [...tasks]
       .map(normalizeTask)
       .toSorted((left, right) => left.title.localeCompare(right.title)),
+    (task) => task.status,
+    options,
   );
 }
 

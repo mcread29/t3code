@@ -133,20 +133,37 @@ describe("projectGoals", () => {
   it("groups standalone tasks by status in the fixed order", () => {
     const groups = groupStandaloneTasksByStatus([
       { title: "Backlog", description: "", status: "planning", subtasks: [] },
+      { title: "Soon", description: "", status: "scheduled", subtasks: [] },
       { title: "Now", description: "", status: "working", subtasks: [] },
       { title: "Done", description: "", status: "done", subtasks: [] },
+      { title: "Archive", description: "", status: "archived", subtasks: [] },
     ]);
 
+    expect(groups.map((group) => group.status)).toEqual(["planning", "scheduled", "working", "done"]);
+    expect(groups[0]?.items.map((task) => task.title)).toEqual(["Backlog"]);
+    expect(groups[1]?.items.map((task) => task.title)).toEqual(["Soon"]);
+    expect(groups[2]?.items.map((task) => task.title)).toEqual(["Now"]);
+    expect(groups[3]?.items.map((task) => task.title)).toEqual(["Done"]);
+  });
+
+  it("can include archived standalone tasks for kanban boards", () => {
+    const groups = groupStandaloneTasksByStatus(
+      [
+        { title: "Backlog", description: "", status: "planning", subtasks: [] },
+        { title: "Archive", description: "", status: "archived", subtasks: [] },
+      ],
+      { includeArchived: true },
+    );
+
     expect(groups.map((group) => group.status)).toEqual([
-      "working",
-      "scheduled",
       "planning",
+      "scheduled",
+      "working",
       "done",
       "archived",
     ]);
-    expect(groups[0]?.items.map((task) => task.title)).toEqual(["Now"]);
-    expect(groups[2]?.items.map((task) => task.title)).toEqual(["Backlog"]);
-    expect(groups[3]?.items.map((task) => task.title)).toEqual(["Done"]);
+    expect(groups[0]?.items.map((task) => task.title)).toEqual(["Backlog"]);
+    expect(groups[4]?.items.map((task) => task.title)).toEqual(["Archive"]);
   });
 
   it("preserves authored subtask order", () => {

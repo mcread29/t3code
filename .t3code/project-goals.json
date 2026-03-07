@@ -1,10 +1,28 @@
 {
   "version": 1,
-  "goals": [],
+  "goals": [
+    {
+      "name": "test",
+      "status": "planning",
+      "tasks": [
+        {
+          "title": "test",
+          "description": "test",
+          "status": "planning",
+          "subtasks": []
+        }
+      ]
+    },
+    {
+      "name": "test2",
+      "status": "planning",
+      "tasks": []
+    }
+  ],
   "tasks": [
     {
       "title": "test",
-      "description": "test",
+      "description": "test\n",
       "status": "planning",
       "subtasks": []
     }

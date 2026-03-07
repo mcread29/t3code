@@ -50,7 +50,12 @@ async function mountOverview() {
   );
 }
 
-beforeEach(() => {
+async function setViewport() {
+  await page.viewport(1280, 1000);
+}
+
+beforeEach(async () => {
+  await setViewport();
   useStore.setState({
     projects: [
       {
@@ -94,7 +99,7 @@ describe("ProjectOverview", () => {
     await screen.unmount();
   });
 
-  it("defaults to the tasks tab and switches between tasks and goals", async () => {
+  it("defaults to the tasks tab and switches between task and goal kanban boards", async () => {
     currentNativeApi = buildNativeApi({
       readFile: vi.fn().mockResolvedValue({
         relativePath: ".t3code/project-goals.json",
@@ -132,10 +137,8 @@ describe("ProjectOverview", () => {
       "aria-selected",
       "true",
     );
-    await expect.element(page.getByText("Sweep dead code")).not.toBeVisible();
-
-    await page.getByText("Done").click();
     await expect.element(page.getByText("Sweep dead code")).toBeVisible();
+    await expect.element(page.getByLabelText("Done tasks")).toBeVisible();
 
     await page.getByRole("tab", { name: /Goals 1/i }).click();
     await expect.element(page.getByRole("tab", { name: /Goals 1/i })).toHaveAttribute(
@@ -145,8 +148,9 @@ describe("ProjectOverview", () => {
     await expect.element(page.getByLabelText("Selected goal")).toBeVisible();
     await expect.element(page.getByText("Launch beta")).toBeVisible();
     await expect.element(page.getByText("Goal Tasks")).toBeVisible();
+    await expect.element(page.getByText("Polish onboarding")).toBeVisible();
+    await expect.element(page.getByLabelText("Scheduled tasks")).toBeVisible();
     await expect.element(page.getByText("High-level project outcomes with nested tasks.")).toBeVisible();
-    await expect.element(page.getByText("Sweep dead code")).not.toBeVisible();
 
     await page.getByRole("tab", { name: /Tasks 1/i }).click();
     await expect.element(page.getByRole("tab", { name: /Tasks 1/i })).toHaveAttribute(
@@ -154,6 +158,109 @@ describe("ProjectOverview", () => {
       "true",
     );
     await expect.element(page.getByText("Tasks that are not attached to a goal.")).toBeVisible();
+
+    await screen.unmount();
+  });
+
+  it("hides archived tasks by default and reveals them with the board toggle", async () => {
+    currentNativeApi = buildNativeApi({
+      readFile: vi.fn().mockResolvedValue({
+        relativePath: ".t3code/project-goals.json",
+        contents: JSON.stringify({
+          version: 1,
+          goals: [
+            {
+              name: "Launch beta",
+              status: "working",
+              tasks: [
+                {
+                  title: "Archive docs",
+                  description: "",
+                  status: "archived",
+                  subtasks: [],
+                },
+              ],
+            },
+          ],
+          tasks: [
+            {
+              title: "Archive cleanup",
+              description: "",
+              status: "archived",
+              subtasks: [],
+            },
+          ],
+        }),
+      }),
+    });
+
+    const screen = await mountOverview();
+
+    await expect.element(page.getByRole("tab", { name: /Tasks 0/i })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await expect.element(page.getByText("No visible standalone tasks")).toBeVisible();
+    await expect.element(page.getByRole("switch", { name: "Show archived" })).toBeVisible();
+
+    await page.getByRole("switch", { name: "Show archived" }).click();
+
+    await expect.element(page.getByRole("tab", { name: /Tasks 1/i })).toBeVisible();
+    await expect.element(page.getByText("Archive cleanup")).toBeVisible();
+    await expect.element(page.getByLabelText("Archived tasks")).toBeVisible();
+
+    await page.getByRole("tab", { name: /Goals 1/i }).click();
+    await expect.element(page.getByText("No visible tasks for this goal")).toBeVisible();
+    await expect.element(page.getByRole("switch", { name: "Show archived" })).toBeVisible();
+
+    await page.getByRole("switch", { name: "Show archived" }).click();
+
+    await expect.element(page.getByText("Archive docs")).toBeVisible();
+
+    await screen.unmount();
+  });
+
+  it("removes a task from the visible board when its status changes to archived", async () => {
+    const writeFile = vi.fn().mockResolvedValue({
+      relativePath: ".t3code/project-goals.json",
+    });
+    currentNativeApi = buildNativeApi({
+      readFile: vi.fn().mockResolvedValue({
+        relativePath: ".t3code/project-goals.json",
+        contents: JSON.stringify({
+          version: 1,
+          goals: [],
+          tasks: [
+            {
+              title: "Sweep dead code",
+              description: "",
+              status: "working",
+              subtasks: [],
+            },
+          ],
+        }),
+      }),
+      writeFile,
+    });
+
+    const screen = await mountOverview();
+
+    await expect.element(page.getByRole("tab", { name: /Tasks 1/i })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    await expect.element(page.getByText("Sweep dead code")).toBeVisible();
+
+    await page.getByLabelText("Status for Sweep dead code").click();
+    await page.getByRole("option", { name: "Archived" }).click();
+
+    await expect.element(page.getByRole("tab", { name: /Tasks 0/i })).toBeVisible();
+    await expect.element(page.getByText("No visible standalone tasks")).toBeVisible();
+    expect(writeFile).toHaveBeenCalledWith({
+      cwd: PROJECT_CWD,
+      relativePath: ".t3code/project-goals.json",
+      contents: expect.stringContaining('"status": "archived"'),
+    });
 
     await screen.unmount();
   });
@@ -173,7 +280,7 @@ describe("ProjectOverview", () => {
     const screen = await mountOverview();
 
     await page.getByRole("tab", { name: /Goals 1/i }).click();
-    await page.getByRole("button", { name: "New Task" }).click();
+    await page.getByRole("button", { name: "New Task" }).first().click();
 
     await expect.element(page.getByRole("dialog")).toBeVisible();
     await expect.element(page.getByRole("heading", { name: "New Task" })).toBeVisible();
@@ -198,6 +305,7 @@ describe("ProjectOverview", () => {
 
     await page.getByRole("button", { name: "Create first goal" }).click();
     await page.getByLabelText("Name").fill("Ship v1");
+    await expect.element(page.getByRole("button", { name: "Create Goal" })).toBeVisible();
     await page.getByRole("button", { name: "Create Goal" }).click();
 
     await expect.element(page.getByText("Ship v1")).toBeVisible();
