@@ -807,8 +807,7 @@ export default function Sidebar() {
         : undefined;
       const activeDraftThread = routeThreadId ? getDraftThread(routeThreadId) : null;
       if (isChatNewLocalShortcut(event, keybindings)) {
-        const projectId =
-          activeThread?.projectId ?? activeDraftThread?.projectId ?? projects[0]?.id;
+        const projectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? projects[0]?.id;
         if (!projectId) return;
         event.preventDefault();
         void handleNewThread(projectId);
@@ -1051,7 +1050,7 @@ export default function Sidebar() {
                         render={
                           <SidebarMenuButton
                             size="sm"
-                            className="gap-2 px-2 py-1.5 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground"
+                            className="gap-2 px-2 py-1.5 pr-12 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground"
                           />
                         }
                         onContextMenu={(event) => {
@@ -1072,6 +1071,33 @@ export default function Sidebar() {
                           {project.name}
                         </span>
                       </CollapsibleTrigger>
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <SidebarMenuAction
+                              render={
+                                <button
+                                  type="button"
+                                  aria-label={`Open ${project.name} overview`}
+                                />
+                              }
+                              showOnHover
+                              className="top-1 right-6 size-5 rounded-md p-0 text-muted-foreground/70 hover:bg-secondary hover:text-foreground"
+                              onClick={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                void navigate({
+                                  to: "/project/$projectId",
+                                  params: { projectId: project.id },
+                                });
+                              }}
+                            >
+                              <FolderIcon className="size-3.5" />
+                            </SidebarMenuAction>
+                          }
+                        />
+                        <TooltipPopup side="top">Project overview</TooltipPopup>
+                      </Tooltip>
                       <Tooltip>
                         <TooltipTrigger
                           render={
