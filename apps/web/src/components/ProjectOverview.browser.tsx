@@ -142,7 +142,9 @@ describe("ProjectOverview", () => {
       "aria-selected",
       "true",
     );
+    await expect.element(page.getByLabelText("Selected goal")).toBeVisible();
     await expect.element(page.getByText("Launch beta")).toBeVisible();
+    await expect.element(page.getByText("Goal Tasks")).toBeVisible();
     await expect.element(page.getByText("High-level project outcomes with nested tasks.")).toBeVisible();
     await expect.element(page.getByText("Sweep dead code")).not.toBeVisible();
 
