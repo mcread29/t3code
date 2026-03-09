@@ -4,7 +4,6 @@ import { useEffect } from "react";
 
 import ProjectOverview from "../components/ProjectOverview";
 import { useStore } from "../store";
-import { SidebarInset } from "~/components/ui/sidebar";
 
 function ProjectOverviewRouteView() {
   const threadsHydrated = useStore((store) => store.threadsHydrated);
@@ -28,11 +27,7 @@ function ProjectOverviewRouteView() {
     return null;
   }
 
-  return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground">
-      <ProjectOverview key={projectId} projectId={projectId} />
-    </SidebarInset>
-  );
+  return <ProjectOverview key={projectId} projectId={projectId} />;
 }
 
 export const Route = createFileRoute("/_chat/project/$projectId")({

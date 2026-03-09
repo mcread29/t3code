@@ -5,7 +5,6 @@ import {
   ArchiveRestoreIcon,
   ChevronDownIcon,
   ChevronRightIcon,
-  ListTodoIcon,
   PencilIcon,
   PlusIcon,
   TargetIcon,
@@ -32,7 +31,6 @@ import {
   updateStandaloneTaskAtIndex,
 } from "~/projectGoals";
 import { useStore } from "~/store";
-import { toastManager } from "../ui/toast";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -56,14 +54,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
-import { Tabs, TabsList, TabsPanel, TabsTab } from "../ui/tabs";
 import { Textarea } from "../ui/textarea";
+import { toastManager } from "../ui/toast";
 import {
   projectGoalsDocumentQueryOptions,
   projectGoalsQueryKeys,
   projectGoalsWriteMutationOptions,
 } from "~/lib/projectGoalsReactQuery";
 import TaskKanbanBoard from "./TaskKanbanBoard";
+import type { ProjectOverviewSection } from "./ProjectOverviewLayout";
 
 type GoalEditorState =
   | { mode: "create" }
@@ -100,15 +99,6 @@ function standaloneTaskRowKey(taskIndex: number): string {
 
 function goalTaskRowKey(goalIndex: number, taskIndex: number): string {
   return `goal:${goalIndex}:task:${taskIndex}`;
-}
-
-function goalOptionKey(goal: ProjectGoal): string {
-  return [
-    goal.name,
-    goal.status,
-    goal.tasks.length,
-    goal.tasks.map((task) => `${task.title}:${task.status}`).join("|"),
-  ].join("::");
 }
 
 function statusBadgeVariant(status: ProjectGoalStatus) {
@@ -148,15 +138,6 @@ function groupTaskEntries(
     tasks.map((task, index) => ({ task, index })),
     (entry) => entry.task.status,
     options,
-  );
-}
-
-function findGoalIndexByShape(goals: readonly ProjectGoal[], goal: ProjectGoal): number {
-  return goals.findIndex(
-    (candidate) =>
-      candidate.name === goal.name &&
-      candidate.status === goal.status &&
-      candidate.tasks.length === goal.tasks.length,
   );
 }
 
@@ -439,15 +420,17 @@ function TaskCard({
       <div className="rounded-xl border border-border bg-background/85">
         <div className="flex flex-col gap-3 px-4 py-3">
           <CollapsibleTrigger className="flex min-w-0 flex-1 items-start gap-3 text-left">
-            {open ? <ChevronDownIcon className="mt-0.5 size-4 shrink-0" /> : <ChevronRightIcon className="mt-0.5 size-4 shrink-0" />}
+            {open ? (
+              <ChevronDownIcon className="mt-0.5 size-4 shrink-0" />
+            ) : (
+              <ChevronRightIcon className="mt-0.5 size-4 shrink-0" />
+            )}
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <p className="truncate text-sm font-medium text-foreground">{task.title || "Untitled task"}</p>
                 <StatusBadge status={task.status} />
               </div>
-              <p className="mt-1 text-xs text-muted-foreground">
-                Subtasks {taskProgressLabel(task)}
-              </p>
+              <p className="mt-1 text-xs text-muted-foreground">Subtasks {taskProgressLabel(task)}</p>
             </div>
           </CollapsibleTrigger>
           <div className="flex flex-wrap items-center gap-2">
@@ -625,30 +608,21 @@ function TaskCard({
   );
 }
 
-function InlineEmptyState({
-  title,
-  description,
-  actionLabel,
-  onAction,
+export default function ProjectOverviewContent({
+  activeSection,
+  goalEditorOpen,
+  onGoalEditorOpenChange,
+  onTaskEditorOpenChange,
+  projectId,
+  taskEditorOpen,
 }: {
-  title: string;
-  description: string;
-  actionLabel: string;
-  onAction: () => void;
+  activeSection: ProjectOverviewSection;
+  goalEditorOpen: boolean;
+  onGoalEditorOpenChange: (open: boolean) => void;
+  onTaskEditorOpenChange: (open: boolean) => void;
+  projectId: ProjectId;
+  taskEditorOpen: boolean;
 }) {
-  return (
-    <div className="rounded-2xl border border-dashed border-border bg-card/50 px-4 py-5 text-sm">
-      <p className="font-medium text-foreground">{title}</p>
-      <p className="mt-1 text-muted-foreground">{description}</p>
-      <Button className="mt-4" size="sm" variant="outline" onClick={onAction}>
-        <PlusIcon />
-        {actionLabel}
-      </Button>
-    </div>
-  );
-}
-
-export default function ProjectOverviewContent({ projectId }: { projectId: ProjectId }) {
   const project = useStore((store) => store.projects.find((entry) => entry.id === projectId) ?? null);
   const queryClient = useQueryClient();
   const api = ensureNativeApi();
@@ -656,8 +630,6 @@ export default function ProjectOverviewContent({ projectId }: { projectId: Proje
   const [openTaskRows, setOpenTaskRows] = React.useState<Record<string, boolean>>({});
   const [goalEditorState, setGoalEditorState] = React.useState<GoalEditorState | null>(null);
   const [taskEditorState, setTaskEditorState] = React.useState<TaskEditorState | null>(null);
-  const [selectedTab, setSelectedTab] = React.useState<"tasks" | "goals">("tasks");
-  const [selectedGoalIndex, setSelectedGoalIndex] = React.useState(0);
   const [showArchivedStandaloneTasks, setShowArchivedStandaloneTasks] = React.useState(false);
   const [showArchivedGoalTasks, setShowArchivedGoalTasks] = React.useState(false);
 
@@ -687,35 +659,39 @@ export default function ProjectOverviewContent({ projectId }: { projectId: Proje
     [project?.cwd, queryClient, writeMutation],
   );
 
+  React.useEffect(() => {
+    if (goalEditorOpen) {
+      setGoalEditorState((current) => current ?? { mode: "create" });
+    }
+  }, [goalEditorOpen]);
+
+  React.useEffect(() => {
+    if (taskEditorOpen) {
+      setTaskEditorState((current) => current ?? { mode: "create", scope: "standalone" });
+    }
+  }, [taskEditorOpen]);
+
+  const closeGoalEditor = React.useCallback(() => {
+    setGoalEditorState(null);
+    onGoalEditorOpenChange(false);
+  }, [onGoalEditorOpenChange]);
+
+  const closeTaskEditor = React.useCallback(() => {
+    setTaskEditorState(null);
+    onTaskEditorOpenChange(false);
+  }, [onTaskEditorOpenChange]);
+
   const document = projectGoalsQuery.data;
-  const goalCount = document?.goals.length ?? 0;
   const standaloneHasArchivedTasks = document?.tasks.some((task) => task.status === "archived") ?? false;
-  const hasAnyGoals = (document?.goals.length ?? 0) > 0;
   const hasAnyStandaloneTasks = (document?.tasks.length ?? 0) > 0;
-  const isEmpty = !hasAnyGoals && !hasAnyStandaloneTasks;
-  const resolvedSelectedGoalIndex = hasAnyGoals && document
-    ? Math.min(selectedGoalIndex, document.goals.length - 1)
-    : 0;
-  const selectedGoal = document?.goals[resolvedSelectedGoalIndex] ?? null;
+  const selectedGoalIndex = activeSection.kind === "goal" ? activeSection.goalIndex : null;
+  const selectedGoal = selectedGoalIndex === null ? null : document?.goals[selectedGoalIndex] ?? null;
   const selectedGoalHasArchivedTasks =
     selectedGoal?.tasks.some((task) => task.status === "archived") ?? false;
 
   const openTaskRow = React.useCallback((rowKey: string) => {
     setOpenTaskRows((current) => ({ ...current, [rowKey]: true }));
   }, []);
-
-  React.useEffect(() => {
-    if (goalCount === 0) {
-      if (selectedGoalIndex !== 0) {
-        setSelectedGoalIndex(0);
-      }
-      return;
-    }
-
-    if (selectedGoalIndex > goalCount - 1) {
-      setSelectedGoalIndex(goalCount - 1);
-    }
-  }, [goalCount, selectedGoalIndex]);
 
   React.useEffect(() => {
     if (!standaloneHasArchivedTasks) {
@@ -805,10 +781,6 @@ export default function ProjectOverviewContent({ projectId }: { projectId: Proje
         includeArchived: showArchivedGoalTasks,
       })
     : [];
-  const visibleSelectedGoalTaskCount = selectedGoalTaskGroups.reduce(
-    (total, group) => total + group.items.length,
-    0,
-  );
 
   const saveGoalEditor = async (input: { name: string; status: ProjectGoalStatus }) => {
     if (!goalEditorState) return;
@@ -819,11 +791,6 @@ export default function ProjectOverviewContent({ projectId }: { projectId: Proje
         goals: [...document.goals, nextGoal],
       });
       await persistDocument(nextDocument);
-      const nextGoalIndex = findGoalIndexByShape(nextDocument.goals, nextGoal);
-      if (nextGoalIndex >= 0) {
-        setSelectedTab("goals");
-        setSelectedGoalIndex(nextGoalIndex);
-      }
       return;
     }
 
@@ -905,420 +872,244 @@ export default function ProjectOverviewContent({ projectId }: { projectId: Proje
 
   return (
     <>
-      <div className="flex h-full min-h-0 flex-1 overflow-y-auto px-6 py-8">
-        <div className="mx-auto flex w-full max-w-6xl flex-col gap-6">
-          <section className="rounded-3xl border border-border bg-card/80 p-6 shadow-sm">
-            <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
-              <div className="min-w-0">
-                <p className="text-xs font-medium tracking-[0.18em] text-muted-foreground uppercase">
-                  Project Overview
-                </p>
-                <h1 className="mt-2 text-3xl font-semibold tracking-tight text-foreground">
-                  {project.name}
-                </h1>
-                <p className="mt-2 break-all text-sm text-muted-foreground">{project.cwd}</p>
-                <p className="mt-4 text-sm text-muted-foreground">
-                  Goals and tasks for this project
-                </p>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Button onClick={() => setGoalEditorState({ mode: "create" })}>
-                  <PlusIcon />
-                  New Goal
-                </Button>
-                <Button variant="outline" onClick={() => setTaskEditorState({ mode: "create", scope: "standalone" })}>
-                  <PlusIcon />
-                  New Task
-                </Button>
-              </div>
-            </div>
-          </section>
-
-          {isEmpty ? (
-            <section className="rounded-3xl border border-dashed border-border bg-card/60 p-8 text-center shadow-sm">
-              <div className="mx-auto max-w-xl">
-                <div className="mx-auto flex size-12 items-center justify-center rounded-2xl border border-border bg-background">
-                  <ListTodoIcon className="size-5 text-muted-foreground" />
+      <div className="flex h-full min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-6">
+        <div className="mx-auto w-full max-w-6xl">
+          {activeSection.kind === "standalone-tasks" ? (
+            <TaskKanbanBoard
+              title="Tasks"
+              description="Tasks that are not attached to a goal."
+              count={visibleStandaloneTaskCount}
+              groups={standaloneGroups}
+              hasAnyTasks={hasAnyStandaloneTasks}
+              hasArchivedTasks={standaloneHasArchivedTasks}
+              showArchived={showArchivedStandaloneTasks}
+              onShowArchivedChange={setShowArchivedStandaloneTasks}
+              alwaysShowBoard
+              showSummary={false}
+              emptyState={{
+                title: "No standalone tasks yet",
+                description: "Use standalone tasks for work that does not belong under a larger goal.",
+                actionLabel: "New Task",
+                onAction: () => setTaskEditorState({ mode: "create", scope: "standalone" }),
+              }}
+              filteredEmptyState={{
+                title: "No visible standalone tasks",
+                description: "Archived tasks are hidden. Turn on Show archived to view them.",
+              }}
+              renderTask={({ task, index: taskIndex }) => (
+                <TaskCard
+                  key={`${task.title}-${taskIndex}`}
+                  task={task}
+                  open={openTaskRows[standaloneTaskRowKey(taskIndex)] ?? false}
+                  onOpenChange={(open) =>
+                    setOpenTaskRows((current) => ({
+                      ...current,
+                      [standaloneTaskRowKey(taskIndex)]: open,
+                    }))
+                  }
+                  onEdit={() =>
+                    setTaskEditorState({
+                      mode: "edit",
+                      scope: "standalone",
+                      taskIndex,
+                      task,
+                    })
+                  }
+                  onDelete={async () => {
+                    const confirmed = await api.dialogs.confirm(
+                      `Delete the task "${task.title || "Untitled task"}"?`,
+                    );
+                    if (!confirmed) return;
+                    await persistDocument(
+                      normalizeProjectGoalsDocument({
+                        ...document,
+                        tasks: document.tasks.filter((_, index) => index !== taskIndex),
+                      }),
+                    );
+                  }}
+                  onStatusChange={async (status) => {
+                    await persistDocument(
+                      updateStandaloneTaskAtIndex(document, taskIndex, (entry) => ({
+                        ...entry,
+                        status,
+                      })),
+                    );
+                  }}
+                  onSave={async (nextTask) => {
+                    await persistDocument(
+                      updateStandaloneTaskAtIndex(document, taskIndex, () => nextTask),
+                    );
+                  }}
+                />
+              )}
+            />
+          ) : selectedGoal && selectedGoalIndex !== null ? (
+            <div className="space-y-4">
+              <div className="flex flex-col gap-3 rounded-2xl border border-border bg-card/80 px-4 py-4 sm:flex-row sm:items-start sm:justify-between">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h2 className="truncate text-base font-medium text-foreground">
+                      {selectedGoal.name || "Untitled goal"}
+                    </h2>
+                    <StatusBadge status={selectedGoal.status} />
+                  </div>
                 </div>
-                <h2 className="mt-4 text-xl font-semibold text-foreground">No goals or tasks yet</h2>
-                <p className="mt-2 text-sm text-muted-foreground">
-                  Create the first project goal or add a standalone task. Planning data stays in
-                  a hidden workspace file at <span className="font-mono">.t3code/project-goals.json</span>.
-                </p>
-                <div className="mt-6 flex flex-wrap justify-center gap-2">
-                  <Button onClick={() => setGoalEditorState({ mode: "create" })}>
-                    <PlusIcon />
-                    Create first goal
+                <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() =>
+                      setGoalEditorState({
+                        mode: "edit",
+                        goalIndex: selectedGoalIndex,
+                        goal: selectedGoal,
+                      })
+                    }
+                  >
+                    <PencilIcon />
+                    Edit
                   </Button>
                   <Button
+                    size="xs"
                     variant="outline"
-                    onClick={() => setTaskEditorState({ mode: "create", scope: "standalone" })}
+                    onClick={() =>
+                      setTaskEditorState({
+                        mode: "create",
+                        scope: "goal",
+                        goalIndex: selectedGoalIndex,
+                      })
+                    }
                   >
                     <PlusIcon />
-                    Create standalone task
+                    Add Task
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() =>
+                      void persistDocument(
+                        updateGoalAtIndex(document, selectedGoalIndex, (entry) => ({
+                          ...entry,
+                          status: entry.status === "archived" ? "planning" : "archived",
+                        })),
+                      )
+                    }
+                  >
+                    {selectedGoal.status === "archived" ? (
+                      <>
+                        <ArchiveRestoreIcon />
+                        Unarchive
+                      </>
+                    ) : (
+                      <>
+                        <ArchiveIcon />
+                        Archive
+                      </>
+                    )}
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="destructive-outline"
+                    onClick={async () => {
+                      const confirmed = await api.dialogs.confirm(
+                        `Delete the goal "${selectedGoal.name || "Untitled goal"}" and all nested tasks?`,
+                      );
+                      if (!confirmed) return;
+                      await persistDocument(
+                        normalizeProjectGoalsDocument({
+                          ...document,
+                          goals: document.goals.filter((_, index) => index !== selectedGoalIndex),
+                        }),
+                      );
+                    }}
+                  >
+                    <Trash2Icon />
+                    Delete
                   </Button>
                 </div>
               </div>
-            </section>
-          ) : null}
 
-          {!isEmpty ? (
-            <section className="rounded-3xl border border-border bg-card/80 p-6 shadow-sm">
-              <Tabs value={selectedTab} onValueChange={(value) => setSelectedTab(value as "tasks" | "goals")}>
-                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <h2 className="text-lg font-semibold text-foreground">Planning</h2>
-                    <p className="text-sm text-muted-foreground">
-                      Switch between standalone tasks and project goals.
-                    </p>
-                  </div>
-                  <TabsList aria-label="Project overview sections">
-                    <TabsTab value="tasks">
-                      <span>Tasks</span>
-                      <Badge variant="outline">{visibleStandaloneTaskCount}</Badge>
-                    </TabsTab>
-                    <TabsTab value="goals">
-                      <span>Goals</span>
-                      <Badge variant="outline">{document.goals.length}</Badge>
-                    </TabsTab>
-                  </TabsList>
-                </div>
-
-                <TabsPanel className="mt-6" value="tasks">
-                  <TaskKanbanBoard
-                    title="Tasks"
-                    description="Tasks that are not attached to a goal."
-                    count={visibleStandaloneTaskCount}
-                    groups={standaloneGroups}
-                    hasAnyTasks={hasAnyStandaloneTasks}
-                    hasArchivedTasks={standaloneHasArchivedTasks}
-                    showArchived={showArchivedStandaloneTasks}
-                    onShowArchivedChange={setShowArchivedStandaloneTasks}
-                    emptyState={{
-                      title: "No standalone tasks yet",
-                      description:
-                        "Use standalone tasks for work that does not belong under a larger goal.",
-                      actionLabel: "New Task",
-                      onAction: () => setTaskEditorState({ mode: "create", scope: "standalone" }),
+              <TaskKanbanBoard
+                title="Goal Tasks"
+                description="Tasks remain independent from the goal status."
+                count={selectedGoalTaskGroups.reduce((total, group) => total + group.items.length, 0)}
+                groups={selectedGoalTaskGroups}
+                hasAnyTasks={selectedGoal.tasks.length > 0}
+                hasArchivedTasks={selectedGoalHasArchivedTasks}
+                showArchived={showArchivedGoalTasks}
+                onShowArchivedChange={setShowArchivedGoalTasks}
+                alwaysShowBoard
+                showSummary={false}
+                emptyState={{
+                  title: "No tasks for this goal",
+                  description: "Add a task to break the goal into concrete work.",
+                  actionLabel: "New Task",
+                  onAction: () =>
+                    setTaskEditorState({
+                      mode: "create",
+                      scope: "goal",
+                      goalIndex: selectedGoalIndex,
+                    }),
+                }}
+                filteredEmptyState={{
+                  title: "No visible tasks for this goal",
+                  description: "Archived tasks are hidden. Turn on Show archived to view them.",
+                }}
+                renderTask={({ task, index: taskIndex }) => (
+                  <TaskCard
+                    key={`${selectedGoalIndex}-${task.title}-${taskIndex}`}
+                    task={task}
+                    open={openTaskRows[goalTaskRowKey(selectedGoalIndex, taskIndex)] ?? false}
+                    onOpenChange={(open) =>
+                      setOpenTaskRows((current) => ({
+                        ...current,
+                        [goalTaskRowKey(selectedGoalIndex, taskIndex)]: open,
+                      }))
+                    }
+                    onEdit={() =>
+                      setTaskEditorState({
+                        mode: "edit",
+                        scope: "goal",
+                        goalIndex: selectedGoalIndex,
+                        taskIndex,
+                        task,
+                      })
+                    }
+                    onDelete={async () => {
+                      const confirmed = await api.dialogs.confirm(
+                        `Delete the task "${task.title || "Untitled task"}"?`,
+                      );
+                      if (!confirmed) return;
+                      await persistDocument(
+                        updateGoalAtIndex(document, selectedGoalIndex, (entry) => ({
+                          ...entry,
+                          tasks: entry.tasks.filter((_, index) => index !== taskIndex),
+                        })),
+                      );
                     }}
-                    filteredEmptyState={{
-                      title: "No visible standalone tasks",
-                      description: "Archived tasks are hidden. Turn on Show archived to view them.",
+                    onStatusChange={async (status) => {
+                      await persistDocument(
+                        updateGoalTaskAtIndex(document, selectedGoalIndex, taskIndex, (entry) => ({
+                          ...entry,
+                          status,
+                        })),
+                      );
                     }}
-                    renderTask={({ task, index: taskIndex }) => (
-                      <TaskCard
-                        key={`${task.title}-${taskIndex}`}
-                        task={task}
-                        open={openTaskRows[standaloneTaskRowKey(taskIndex)] ?? false}
-                        onOpenChange={(open) =>
-                          setOpenTaskRows((current) => ({
-                            ...current,
-                            [standaloneTaskRowKey(taskIndex)]: open,
-                          }))
-                        }
-                        onEdit={() =>
-                          setTaskEditorState({
-                            mode: "edit",
-                            scope: "standalone",
-                            taskIndex,
-                            task,
-                          })
-                        }
-                        onDelete={async () => {
-                          const confirmed = await api.dialogs.confirm(
-                            `Delete the task "${task.title || "Untitled task"}"?`,
-                          );
-                          if (!confirmed) return;
-                          await persistDocument(
-                            normalizeProjectGoalsDocument({
-                              ...document,
-                              tasks: document.tasks.filter((_, index) => index !== taskIndex),
-                            }),
-                          );
-                        }}
-                        onStatusChange={async (status) => {
-                          await persistDocument(
-                            updateStandaloneTaskAtIndex(document, taskIndex, (entry) => ({
-                              ...entry,
-                              status,
-                            })),
-                          );
-                        }}
-                        onSave={async (nextTask) => {
-                          await persistDocument(
-                            updateStandaloneTaskAtIndex(document, taskIndex, () => nextTask),
-                          );
-                        }}
-                      />
-                    )}
+                    onSave={async (nextTask) => {
+                      await persistDocument(
+                        updateGoalTaskAtIndex(document, selectedGoalIndex, taskIndex, () => nextTask),
+                      );
+                    }}
                   />
-                </TabsPanel>
-
-                <TabsPanel className="mt-6" value="goals">
-                  <div className="space-y-4 pb-2">
-                    <div className="flex items-center justify-between gap-3">
-                      <div>
-                        <h2 className="text-lg font-semibold text-foreground">Goals</h2>
-                        <p className="text-sm text-muted-foreground">
-                          High-level project outcomes with nested tasks.
-                        </p>
-                      </div>
-                      <Badge variant="outline">{document.goals.length}</Badge>
-                    </div>
-
-                    {!hasAnyGoals ? (
-                      <InlineEmptyState
-                        title="No goals yet"
-                        description="Create a goal to organize related tasks under a shared outcome."
-                        actionLabel="New Goal"
-                        onAction={() => setGoalEditorState({ mode: "create" })}
-                      />
-                    ) : (
-                      <div className="space-y-3">
-                        <div className="space-y-2">
-                          <Label htmlFor="project-overview-goal-selector">Goal</Label>
-                          <Select
-                            value={String(resolvedSelectedGoalIndex)}
-                            onValueChange={(value) => setSelectedGoalIndex(Number(value))}
-                          >
-                            <SelectTrigger
-                              id="project-overview-goal-selector"
-                              aria-label="Selected goal"
-                            >
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {document.goals.map((goal, goalIndex) => (
-                                <SelectItem key={goalOptionKey(goal)} value={String(goalIndex)}>
-                                  {goal.name || `Untitled goal ${goalIndex + 1}`}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                        </div>
-
-                        {selectedGoal ? (
-                          <>
-                            <div className="flex flex-col gap-4 rounded-2xl border border-border bg-background/80 px-4 py-4 sm:flex-row sm:items-start sm:justify-between">
-                              <div className="min-w-0">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <h3 className="text-base font-medium text-foreground">
-                                    {selectedGoal.name || "Untitled goal"}
-                                  </h3>
-                                  <StatusBadge status={selectedGoal.status} />
-                                </div>
-                                <p className="mt-1 text-sm text-muted-foreground">
-                                  {visibleSelectedGoalTaskCount}{" "}
-                                  {visibleSelectedGoalTaskCount === 1 ? "task" : "tasks"}
-                                </p>
-                              </div>
-                              <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-                                <Button
-                                  size="xs"
-                                  variant="outline"
-                                  onClick={() =>
-                                    setGoalEditorState({
-                                      mode: "edit",
-                                      goalIndex: resolvedSelectedGoalIndex,
-                                      goal: selectedGoal,
-                                    })
-                                  }
-                                >
-                                  <PencilIcon />
-                                  Edit
-                                </Button>
-                                <Button
-                                  size="xs"
-                                  variant="outline"
-                                  onClick={() =>
-                                    setTaskEditorState({
-                                      mode: "create",
-                                      scope: "goal",
-                                      goalIndex: resolvedSelectedGoalIndex,
-                                    })
-                                  }
-                                >
-                                  <PlusIcon />
-                                  Add Task
-                                </Button>
-                                <Button
-                                  size="xs"
-                                  variant="outline"
-                                  onClick={() =>
-                                    void persistDocument(
-                                      updateGoalAtIndex(document, resolvedSelectedGoalIndex, (entry) => ({
-                                        ...entry,
-                                        status: entry.status === "archived" ? "planning" : "archived",
-                                      })),
-                                    )
-                                  }
-                                >
-                                  {selectedGoal.status === "archived" ? (
-                                    <>
-                                      <ArchiveRestoreIcon />
-                                      Unarchive
-                                    </>
-                                  ) : (
-                                    <>
-                                      <ArchiveIcon />
-                                      Archive
-                                    </>
-                                  )}
-                                </Button>
-                                <Button
-                                  size="xs"
-                                  variant="destructive-outline"
-                                  onClick={async () => {
-                                    const confirmed = await api.dialogs.confirm(
-                                      `Delete the goal "${selectedGoal.name || "Untitled goal"}" and all nested tasks?`,
-                                    );
-                                    if (!confirmed) return;
-                                    await persistDocument(
-                                      normalizeProjectGoalsDocument({
-                                        ...document,
-                                        goals: document.goals.filter(
-                                          (_, index) => index !== resolvedSelectedGoalIndex,
-                                        ),
-                                      }),
-                                    );
-                                  }}
-                                >
-                                  <Trash2Icon />
-                                  Delete
-                                </Button>
-                              </div>
-                            </div>
-
-                            <div className="space-y-3">
-                              <div className="flex justify-end">
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() =>
-                                    setTaskEditorState({
-                                      mode: "create",
-                                      scope: "goal",
-                                      goalIndex: resolvedSelectedGoalIndex,
-                                    })
-                                  }
-                                >
-                                  <PlusIcon />
-                                  New Task
-                                </Button>
-                              </div>
-
-                              <TaskKanbanBoard
-                                title="Goal Tasks"
-                                description="Tasks remain independent from the goal status."
-                                count={visibleSelectedGoalTaskCount}
-                                groups={selectedGoalTaskGroups}
-                                hasAnyTasks={selectedGoal.tasks.length > 0}
-                                hasArchivedTasks={selectedGoalHasArchivedTasks}
-                                showArchived={showArchivedGoalTasks}
-                                onShowArchivedChange={setShowArchivedGoalTasks}
-                                emptyState={{
-                                  title: "No tasks for this goal",
-                                  description:
-                                    "Add a task to start breaking the goal into concrete work.",
-                                  actionLabel: "New Task",
-                                  onAction: () =>
-                                    setTaskEditorState({
-                                      mode: "create",
-                                      scope: "goal",
-                                      goalIndex: resolvedSelectedGoalIndex,
-                                    }),
-                                }}
-                                filteredEmptyState={{
-                                  title: "No visible tasks for this goal",
-                                  description:
-                                    "Archived tasks are hidden. Turn on Show archived to view them.",
-                                }}
-                                renderTask={({ task, index: taskIndex }) => (
-                                  <TaskCard
-                                    key={`${resolvedSelectedGoalIndex}-${task.title}-${taskIndex}`}
-                                    task={task}
-                                    open={
-                                      openTaskRows[
-                                        goalTaskRowKey(resolvedSelectedGoalIndex, taskIndex)
-                                      ] ?? false
-                                    }
-                                    onOpenChange={(open) =>
-                                      setOpenTaskRows((current) => ({
-                                        ...current,
-                                        [goalTaskRowKey(resolvedSelectedGoalIndex, taskIndex)]: open,
-                                      }))
-                                    }
-                                    onEdit={() =>
-                                      setTaskEditorState({
-                                        mode: "edit",
-                                        scope: "goal",
-                                        goalIndex: resolvedSelectedGoalIndex,
-                                        taskIndex,
-                                        task,
-                                      })
-                                    }
-                                    onDelete={async () => {
-                                      const confirmed = await api.dialogs.confirm(
-                                        `Delete the task "${task.title || "Untitled task"}"?`,
-                                      );
-                                      if (!confirmed) return;
-                                      await persistDocument(
-                                        updateGoalAtIndex(
-                                          document,
-                                          resolvedSelectedGoalIndex,
-                                          (entry) => ({
-                                            ...entry,
-                                            tasks: entry.tasks.filter((_, index) => index !== taskIndex),
-                                          }),
-                                        ),
-                                      );
-                                    }}
-                                    onStatusChange={async (status) => {
-                                      await persistDocument(
-                                        updateGoalTaskAtIndex(
-                                          document,
-                                          resolvedSelectedGoalIndex,
-                                          taskIndex,
-                                          (entry) => ({ ...entry, status }),
-                                        ),
-                                      );
-                                    }}
-                                    onSave={async (nextTask) => {
-                                      await persistDocument(
-                                        updateGoalTaskAtIndex(
-                                          document,
-                                          resolvedSelectedGoalIndex,
-                                          taskIndex,
-                                          () => nextTask,
-                                        ),
-                                      );
-                                    }}
-                                  />
-                                )}
-                              />
-                            </div>
-                          </>
-                        ) : null}
-                      </div>
-                    )}
-                  </div>
-                </TabsPanel>
-              </Tabs>
-            </section>
+                )}
+              />
+            </div>
           ) : null}
         </div>
       </div>
 
-      <GoalEditorDialog
-        state={goalEditorState}
-        onClose={() => setGoalEditorState(null)}
-        onSubmit={saveGoalEditor}
-      />
-      <TaskEditorDialog
-        state={taskEditorState}
-        onClose={() => setTaskEditorState(null)}
-        onSubmit={saveTaskEditor}
-      />
+      <GoalEditorDialog state={goalEditorState} onClose={closeGoalEditor} onSubmit={saveGoalEditor} />
+      <TaskEditorDialog state={taskEditorState} onClose={closeTaskEditor} onSubmit={saveTaskEditor} />
     </>
   );
 }

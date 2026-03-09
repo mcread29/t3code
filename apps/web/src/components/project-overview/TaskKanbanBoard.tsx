@@ -28,6 +28,8 @@ interface TaskKanbanBoardProps<TItem> {
     description: string;
   };
   renderTask: (item: TItem, status: ProjectGoalStatus) => React.ReactNode;
+  alwaysShowBoard?: boolean;
+  showSummary?: boolean;
 }
 
 export default function TaskKanbanBoard<TItem>({
@@ -42,36 +44,45 @@ export default function TaskKanbanBoard<TItem>({
   emptyState,
   filteredEmptyState,
   renderTask,
+  alwaysShowBoard = false,
+  showSummary = true,
 }: TaskKanbanBoardProps<TItem>) {
   const archivedSwitchId = React.useId();
   const hasVisibleTasks = groups.some((group) => group.items.length > 0);
 
   return (
     <div className="space-y-4 pb-2">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold text-foreground">{title}</h2>
-          <p className="text-sm text-muted-foreground">{description}</p>
-        </div>
-        <div className="flex items-center gap-3">
-          {hasArchivedTasks ? (
-            <div className="flex items-center gap-2">
-              <Label className="text-sm font-normal text-muted-foreground" htmlFor={archivedSwitchId}>
-                Show archived
-              </Label>
-              <Switch
-                aria-label="Show archived"
-                checked={showArchived}
-                id={archivedSwitchId}
-                onCheckedChange={onShowArchivedChange}
-              />
+      {showSummary || hasArchivedTasks ? (
+        <div className={`flex items-center gap-3 ${showSummary ? "justify-between" : "justify-end"}`}>
+          {showSummary ? (
+            <div>
+              <h2 className="text-lg font-semibold text-foreground">{title}</h2>
+              <p className="text-sm text-muted-foreground">{description}</p>
             </div>
           ) : null}
-          <Badge variant="outline">{count}</Badge>
+          <div className="flex items-center gap-3">
+            {hasArchivedTasks ? (
+              <div className="flex items-center gap-2">
+                <Label
+                  className="text-sm font-normal text-muted-foreground"
+                  htmlFor={archivedSwitchId}
+                >
+                  Show archived
+                </Label>
+                <Switch
+                  aria-label="Show archived"
+                  checked={showArchived}
+                  id={archivedSwitchId}
+                  onCheckedChange={onShowArchivedChange}
+                />
+              </div>
+            ) : null}
+            {showSummary ? <Badge variant="outline">{count}</Badge> : null}
+          </div>
         </div>
-      </div>
+      ) : null}
 
-      {!hasAnyTasks ? (
+      {!alwaysShowBoard && !hasAnyTasks ? (
         <div className="rounded-2xl border border-dashed border-border bg-card/50 px-4 py-5 text-sm">
           <p className="font-medium text-foreground">{emptyState.title}</p>
           <p className="mt-1 text-muted-foreground">{emptyState.description}</p>
@@ -79,7 +90,7 @@ export default function TaskKanbanBoard<TItem>({
             {emptyState.actionLabel}
           </Button>
         </div>
-      ) : !hasVisibleTasks ? (
+      ) : !alwaysShowBoard && !hasVisibleTasks ? (
         <div className="rounded-2xl border border-dashed border-border bg-card/50 px-4 py-5 text-sm">
           <p className="font-medium text-foreground">{filteredEmptyState.title}</p>
           <p className="mt-1 text-muted-foreground">{filteredEmptyState.description}</p>

@@ -82,7 +82,7 @@ afterEach(() => {
 });
 
 describe("ProjectOverview", () => {
-  it("shows the empty state when the planning file is missing", async () => {
+  it("shows a compact header with the project name, path, and primary actions", async () => {
     currentNativeApi = buildNativeApi({
       readFile: vi.fn().mockResolvedValue({
         relativePath: ".t3code/project-goals.json",
@@ -92,14 +92,58 @@ describe("ProjectOverview", () => {
 
     const screen = await mountOverview();
 
-    await expect.element(page.getByText("No goals or tasks yet")).toBeVisible();
-    await expect.element(page.getByRole("button", { name: "Create first goal" })).toBeVisible();
-    await expect.element(page.getByRole("button", { name: "Create standalone task" })).toBeVisible();
+    await expect.element(page.getByRole("heading", { name: "Project Overview Test" })).toBeVisible();
+    await expect.element(page.getByText(PROJECT_CWD)).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "New Goal" })).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "New Task" }).first()).toBeVisible();
 
     await screen.unmount();
   });
 
-  it("defaults to the tasks tab and switches between task and goal kanban boards", async () => {
+  it("renders standalone tasks and all goals in the project nav", async () => {
+    currentNativeApi = buildNativeApi({
+      readFile: vi.fn().mockResolvedValue({
+        relativePath: ".t3code/project-goals.json",
+        contents: JSON.stringify({
+          version: 1,
+          goals: [
+            {
+              name: "Launch beta",
+              status: "working",
+              tasks: [],
+            },
+            {
+              name: "Stabilize editor",
+              status: "planning",
+              tasks: [],
+            },
+          ],
+          tasks: [
+            {
+              title: "Sweep dead code",
+              description: "",
+              status: "working",
+              subtasks: [],
+            },
+          ],
+        }),
+      }),
+    });
+
+    const screen = await mountOverview();
+
+    await expect.element(page.getByRole("button", { name: "Standalone Tasks" })).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+    await expect.element(page.getByRole("button", { name: "Launch beta" })).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Stabilize editor" })).toBeVisible();
+    await expect.element(page.getByText("Sweep dead code")).toBeVisible();
+
+    await screen.unmount();
+  });
+
+  it("switches from standalone tasks to a selected goal without tabs", async () => {
     currentNativeApi = buildNativeApi({
       readFile: vi.fn().mockResolvedValue({
         relativePath: ".t3code/project-goals.json",
@@ -133,36 +177,60 @@ describe("ProjectOverview", () => {
 
     const screen = await mountOverview();
 
-    await expect.element(page.getByRole("tab", { name: /Tasks 1/i })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-    await expect.element(page.getByText("Sweep dead code")).toBeVisible();
-    await expect.element(page.getByLabelText("Done tasks")).toBeVisible();
+    await page.getByRole("button", { name: "Launch beta" }).click();
 
-    await page.getByRole("tab", { name: /Goals 1/i }).click();
-    await expect.element(page.getByRole("tab", { name: /Goals 1/i })).toHaveAttribute(
-      "aria-selected",
+    await expect.element(page.getByRole("button", { name: "Launch beta" })).toHaveAttribute(
+      "data-active",
       "true",
     );
-    await expect.element(page.getByLabelText("Selected goal")).toBeVisible();
-    await expect.element(page.getByText("Launch beta")).toBeVisible();
-    await expect.element(page.getByText("Goal Tasks")).toBeVisible();
     await expect.element(page.getByText("Polish onboarding")).toBeVisible();
-    await expect.element(page.getByLabelText("Scheduled tasks")).toBeVisible();
-    await expect.element(page.getByText("High-level project outcomes with nested tasks.")).toBeVisible();
-
-    await page.getByRole("tab", { name: /Tasks 1/i }).click();
-    await expect.element(page.getByRole("tab", { name: /Tasks 1/i })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-    await expect.element(page.getByText("Tasks that are not attached to a goal.")).toBeVisible();
+    await expect.element(page.getByText("Sweep dead code")).not.toBeInTheDocument();
+    await expect.element(page.getByRole("tab", { name: /Tasks/i })).not.toBeInTheDocument();
+    await expect.element(page.getByRole("tab", { name: /Goals/i })).not.toBeInTheDocument();
 
     await screen.unmount();
   });
 
-  it("hides archived tasks by default and reveals them with the board toggle", async () => {
+  it("keeps the standalone board visible when the project nav is collapsed and expanded on desktop", async () => {
+    currentNativeApi = buildNativeApi({
+      readFile: vi.fn().mockResolvedValue({
+        relativePath: ".t3code/project-goals.json",
+        contents: JSON.stringify({
+          version: 1,
+          goals: [
+            {
+              name: "Launch beta",
+              status: "working",
+              tasks: [],
+            },
+          ],
+          tasks: [
+            {
+              title: "Sweep dead code",
+              description: "",
+              status: "working",
+              subtasks: [],
+            },
+          ],
+        }),
+      }),
+    });
+
+    const screen = await mountOverview();
+
+    const sidebarToggle = page.getByRole("button", { name: "Toggle Sidebar" }).first();
+
+    await expect.element(page.getByRole("button", { name: "Standalone Tasks" })).toBeVisible();
+    await sidebarToggle.click();
+    await expect.element(page.getByRole("button", { name: "Standalone Tasks" })).not.toBeVisible();
+    await expect.element(page.getByText("Sweep dead code")).toBeVisible();
+    await sidebarToggle.click();
+    await expect.element(page.getByRole("button", { name: "Standalone Tasks" })).toBeVisible();
+
+    await screen.unmount();
+  });
+
+  it("hides archived standalone tasks by default and reveals them with the board toggle", async () => {
     currentNativeApi = buildNativeApi({
       readFile: vi.fn().mockResolvedValue({
         relativePath: ".t3code/project-goals.json",
@@ -196,76 +264,20 @@ describe("ProjectOverview", () => {
 
     const screen = await mountOverview();
 
-    await expect.element(page.getByRole("tab", { name: /Tasks 0/i })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-    await expect.element(page.getByText("No visible standalone tasks")).toBeVisible();
+    await expect.element(page.getByText("Archive cleanup")).not.toBeInTheDocument();
+    await expect.element(page.getByText("Archive docs")).not.toBeInTheDocument();
     await expect.element(page.getByRole("switch", { name: "Show archived" })).toBeVisible();
 
     await page.getByRole("switch", { name: "Show archived" }).click();
 
-    await expect.element(page.getByRole("tab", { name: /Tasks 1/i })).toBeVisible();
     await expect.element(page.getByText("Archive cleanup")).toBeVisible();
     await expect.element(page.getByLabelText("Archived tasks")).toBeVisible();
-
-    await page.getByRole("tab", { name: /Goals 1/i }).click();
-    await expect.element(page.getByText("No visible tasks for this goal")).toBeVisible();
-    await expect.element(page.getByRole("switch", { name: "Show archived" })).toBeVisible();
-
-    await page.getByRole("switch", { name: "Show archived" }).click();
-
-    await expect.element(page.getByText("Archive docs")).toBeVisible();
+    await expect.element(page.getByText("Archive docs")).not.toBeInTheDocument();
 
     await screen.unmount();
   });
 
-  it("removes a task from the visible board when its status changes to archived", async () => {
-    const writeFile = vi.fn().mockResolvedValue({
-      relativePath: ".t3code/project-goals.json",
-    });
-    currentNativeApi = buildNativeApi({
-      readFile: vi.fn().mockResolvedValue({
-        relativePath: ".t3code/project-goals.json",
-        contents: JSON.stringify({
-          version: 1,
-          goals: [],
-          tasks: [
-            {
-              title: "Sweep dead code",
-              description: "",
-              status: "working",
-              subtasks: [],
-            },
-          ],
-        }),
-      }),
-      writeFile,
-    });
-
-    const screen = await mountOverview();
-
-    await expect.element(page.getByRole("tab", { name: /Tasks 1/i })).toHaveAttribute(
-      "aria-selected",
-      "true",
-    );
-    await expect.element(page.getByText("Sweep dead code")).toBeVisible();
-
-    await page.getByLabelText("Status for Sweep dead code").click();
-    await page.getByRole("option", { name: "Archived" }).click();
-
-    await expect.element(page.getByRole("tab", { name: /Tasks 0/i })).toBeVisible();
-    await expect.element(page.getByText("No visible standalone tasks")).toBeVisible();
-    expect(writeFile).toHaveBeenCalledWith({
-      cwd: PROJECT_CWD,
-      relativePath: ".t3code/project-goals.json",
-      contents: expect.stringContaining('"status": "archived"'),
-    });
-
-    await screen.unmount();
-  });
-
-  it("opens the standalone task dialog from the header while the goals tab is selected", async () => {
+  it("opens the standalone task dialog from the header even when only goals exist", async () => {
     currentNativeApi = buildNativeApi({
       readFile: vi.fn().mockResolvedValue({
         relativePath: ".t3code/project-goals.json",
@@ -279,7 +291,6 @@ describe("ProjectOverview", () => {
 
     const screen = await mountOverview();
 
-    await page.getByRole("tab", { name: /Goals 1/i }).click();
     await page.getByRole("button", { name: "New Task" }).first().click();
 
     await expect.element(page.getByRole("dialog")).toBeVisible();
@@ -303,17 +314,52 @@ describe("ProjectOverview", () => {
 
     const screen = await mountOverview();
 
-    await page.getByRole("button", { name: "Create first goal" }).click();
+    await page.getByRole("button", { name: "New Goal" }).click();
     await page.getByLabelText("Name").fill("Ship v1");
-    await expect.element(page.getByRole("button", { name: "Create Goal" })).toBeVisible();
     await page.getByRole("button", { name: "Create Goal" }).click();
 
-    await expect.element(page.getByText("Ship v1")).toBeVisible();
     expect(writeFile).toHaveBeenCalledWith({
       cwd: PROJECT_CWD,
       relativePath: ".t3code/project-goals.json",
       contents: expect.stringContaining('"name": "Ship v1"'),
     });
+
+    await screen.unmount();
+  });
+
+  it("opens the mobile project nav sheet with goal entries", async () => {
+    await page.viewport(430, 932);
+    currentNativeApi = buildNativeApi({
+      readFile: vi.fn().mockResolvedValue({
+        relativePath: ".t3code/project-goals.json",
+        contents: JSON.stringify({
+          version: 1,
+          goals: [
+            {
+              name: "Launch beta",
+              status: "working",
+              tasks: [],
+            },
+          ],
+          tasks: [
+            {
+              title: "Sweep dead code",
+              description: "",
+              status: "working",
+              subtasks: [],
+            },
+          ],
+        }),
+      }),
+    });
+
+    const screen = await mountOverview();
+
+    await page.getByRole("button", { name: "Toggle Sidebar" }).click();
+    await expect.element(page.getByRole("button", { name: "Standalone Tasks" })).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Launch beta" })).toBeVisible();
+    await page.getByRole("button", { name: "Launch beta" }).click();
+    await expect.element(page.getByText("Sweep dead code")).not.toBeInTheDocument();
 
     await screen.unmount();
   });
