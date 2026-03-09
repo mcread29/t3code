@@ -6,6 +6,7 @@ import path from "node:path";
 import { ApprovalRequestId, ThreadId } from "@t3tools/contracts";
 
 import {
+  buildCodexCliArgs,
   buildCodexInitializeParams,
   CODEX_DEFAULT_MODE_DEVELOPER_INSTRUCTIONS,
   CODEX_PLAN_MODE_DEVELOPER_INSTRUCTIONS,
@@ -180,6 +181,20 @@ describe("normalizeCodexModelSlug", () => {
   it("keeps non-aliased models as-is", () => {
     expect(normalizeCodexModelSlug("gpt-5.2-codex")).toBe("gpt-5.2-codex");
     expect(normalizeCodexModelSlug("gpt-5.2")).toBe("gpt-5.2");
+  });
+});
+
+describe("buildCodexCliArgs", () => {
+  it("injects the managed project planning MCP override ahead of the subcommand", () => {
+    expect(buildCodexCliArgs(["app-server"], "http://127.0.0.1:34831/mcp")).toEqual([
+      "-c",
+      'mcp_servers.project_planning.url="http://127.0.0.1:34831/mcp"',
+      "app-server",
+    ]);
+  });
+
+  it("leaves the original args untouched when no managed MCP url is available", () => {
+    expect(buildCodexCliArgs(["--version"], undefined)).toEqual(["--version"]);
   });
 });
 
@@ -365,6 +380,46 @@ describe("startSession", () => {
         },
       ]);
     } finally {
+      versionCheck.mockRestore();
+      manager.stopAll();
+    }
+  });
+
+  it("expands inherited CODEX_HOME before probing the Codex CLI", async () => {
+    const manager = new CodexAppServerManager();
+    const versionCheck = vi
+      .spyOn(
+        manager as unknown as {
+          assertSupportedCodexCliVersion: (input: {
+            binaryPath: string;
+            cwd: string;
+            homePath?: string;
+          }) => void;
+        },
+        "assertSupportedCodexCliVersion",
+      )
+      .mockImplementation((input) => {
+        expect(input.homePath).toBe(path.join(os.homedir(), ".codex"));
+        throw new Error("stop before spawn");
+      });
+    const originalCodexHome = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = "~/.codex";
+
+    try {
+      await expect(
+        manager.startSession({
+          threadId: asThreadId("thread-1"),
+          provider: "codex",
+          runtimeMode: "full-access",
+        }),
+      ).rejects.toThrow("stop before spawn");
+      expect(versionCheck).toHaveBeenCalledTimes(1);
+    } finally {
+      if (originalCodexHome === undefined) {
+        delete process.env.CODEX_HOME;
+      } else {
+        process.env.CODEX_HOME = originalCodexHome;
+      }
       versionCheck.mockRestore();
       manager.stopAll();
     }

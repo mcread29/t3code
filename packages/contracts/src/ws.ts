@@ -30,6 +30,19 @@ import {
 } from "./terminal";
 import { KeybindingRule } from "./keybindings";
 import { ProjectReadFileInput, ProjectSearchEntriesInput, ProjectWriteFileInput } from "./project";
+import {
+  ProjectPlanningCreateGoalInput,
+  ProjectPlanningCreateSubtaskInput,
+  ProjectPlanningCreateTaskInput,
+  ProjectPlanningDeleteGoalInput,
+  ProjectPlanningDeleteSubtaskInput,
+  ProjectPlanningDeleteTaskInput,
+  ProjectPlanningGetSnapshotInput,
+  ProjectPlanningUpdatedPayload,
+  ProjectPlanningUpdateGoalInput,
+  ProjectPlanningUpdateSubtaskInput,
+  ProjectPlanningUpdateTaskInput,
+} from "./projectPlanning";
 import { OpenInEditorInput } from "./editor";
 
 // ── WebSocket RPC Method Names ───────────────────────────────────────
@@ -42,6 +55,16 @@ export const WS_METHODS = {
   projectsSearchEntries: "projects.searchEntries",
   projectsReadFile: "projects.readFile",
   projectsWriteFile: "projects.writeFile",
+  projectPlanningGetSnapshot: "projectPlanning.getSnapshot",
+  projectPlanningCreateGoal: "projectPlanning.createGoal",
+  projectPlanningUpdateGoal: "projectPlanning.updateGoal",
+  projectPlanningDeleteGoal: "projectPlanning.deleteGoal",
+  projectPlanningCreateTask: "projectPlanning.createTask",
+  projectPlanningUpdateTask: "projectPlanning.updateTask",
+  projectPlanningDeleteTask: "projectPlanning.deleteTask",
+  projectPlanningCreateSubtask: "projectPlanning.createSubtask",
+  projectPlanningUpdateSubtask: "projectPlanning.updateSubtask",
+  projectPlanningDeleteSubtask: "projectPlanning.deleteSubtask",
 
   // Shell methods
   shellOpenInEditor: "shell.openInEditor",
@@ -76,6 +99,7 @@ export const WS_CHANNELS = {
   terminalEvent: "terminal.event",
   serverWelcome: "server.welcome",
   serverConfigUpdated: "server.configUpdated",
+  projectPlanningUpdated: "projectPlanning.updated",
 } as const;
 
 // -- Tagged Union of all request body schemas ─────────────────────────
@@ -105,6 +129,16 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.projectsSearchEntries, ProjectSearchEntriesInput),
   tagRequestBody(WS_METHODS.projectsReadFile, ProjectReadFileInput),
   tagRequestBody(WS_METHODS.projectsWriteFile, ProjectWriteFileInput),
+  tagRequestBody(WS_METHODS.projectPlanningGetSnapshot, ProjectPlanningGetSnapshotInput),
+  tagRequestBody(WS_METHODS.projectPlanningCreateGoal, ProjectPlanningCreateGoalInput),
+  tagRequestBody(WS_METHODS.projectPlanningUpdateGoal, ProjectPlanningUpdateGoalInput),
+  tagRequestBody(WS_METHODS.projectPlanningDeleteGoal, ProjectPlanningDeleteGoalInput),
+  tagRequestBody(WS_METHODS.projectPlanningCreateTask, ProjectPlanningCreateTaskInput),
+  tagRequestBody(WS_METHODS.projectPlanningUpdateTask, ProjectPlanningUpdateTaskInput),
+  tagRequestBody(WS_METHODS.projectPlanningDeleteTask, ProjectPlanningDeleteTaskInput),
+  tagRequestBody(WS_METHODS.projectPlanningCreateSubtask, ProjectPlanningCreateSubtaskInput),
+  tagRequestBody(WS_METHODS.projectPlanningUpdateSubtask, ProjectPlanningUpdateSubtaskInput),
+  tagRequestBody(WS_METHODS.projectPlanningDeleteSubtask, ProjectPlanningDeleteSubtaskInput),
 
   // Shell methods
   tagRequestBody(WS_METHODS.shellOpenInEditor, OpenInEditorInput),
@@ -171,3 +205,5 @@ export const WsWelcomePayload = Schema.Struct({
   bootstrapThreadId: Schema.optional(ThreadId),
 });
 export type WsWelcomePayload = typeof WsWelcomePayload.Type;
+
+export { ProjectPlanningUpdatedPayload };

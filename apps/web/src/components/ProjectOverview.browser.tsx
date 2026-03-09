@@ -54,6 +54,10 @@ async function setViewport() {
   await page.viewport(1280, 1000);
 }
 
+function taskBoard() {
+  return page.getByTestId("task-kanban-board");
+}
+
 beforeEach(async () => {
   await setViewport();
   useStore.setState({
@@ -221,11 +225,13 @@ describe("ProjectOverview", () => {
     const sidebarToggle = page.getByRole("button", { name: "Toggle Sidebar" }).first();
 
     await expect.element(page.getByRole("button", { name: "Standalone Tasks" })).toBeVisible();
+    await expect.element(taskBoard()).toHaveAttribute("data-layout", "columns");
     await sidebarToggle.click();
-    await expect.element(page.getByRole("button", { name: "Standalone Tasks" })).not.toBeVisible();
     await expect.element(page.getByText("Sweep dead code")).toBeVisible();
+    await expect.element(taskBoard()).toBeVisible();
     await sidebarToggle.click();
     await expect.element(page.getByRole("button", { name: "Standalone Tasks" })).toBeVisible();
+    await expect.element(taskBoard()).toHaveAttribute("data-layout", "columns");
 
     await screen.unmount();
   });
@@ -273,6 +279,203 @@ describe("ProjectOverview", () => {
     await expect.element(page.getByText("Archive cleanup")).toBeVisible();
     await expect.element(page.getByLabelText("Archived tasks")).toBeVisible();
     await expect.element(page.getByText("Archive docs")).not.toBeInTheDocument();
+
+    await screen.unmount();
+  });
+
+  it("stacks standalone task categories vertically when the board is too narrow", async () => {
+    await page.viewport(900, 1000);
+    currentNativeApi = buildNativeApi({
+      readFile: vi.fn().mockResolvedValue({
+        relativePath: ".t3code/project-goals.json",
+        contents: JSON.stringify({
+          version: 1,
+          goals: [],
+          tasks: [
+            {
+              title: "Plan rollout",
+              description: "",
+              status: "planning",
+              subtasks: [],
+            },
+            {
+              title: "Queue review",
+              description: "",
+              status: "scheduled",
+              subtasks: [],
+            },
+            {
+              title: "Ship patch",
+              description: "",
+              status: "working",
+              subtasks: [],
+            },
+            {
+              title: "Write recap",
+              description: "",
+              status: "done",
+              subtasks: [],
+            },
+          ],
+        }),
+      }),
+    });
+
+    const screen = await mountOverview();
+
+    await expect.element(taskBoard()).toHaveAttribute("data-layout", "stacked");
+
+    await screen.unmount();
+  });
+
+  it("stacks goal task categories vertically when the board is too narrow", async () => {
+    await page.viewport(900, 1000);
+    currentNativeApi = buildNativeApi({
+      readFile: vi.fn().mockResolvedValue({
+        relativePath: ".t3code/project-goals.json",
+        contents: JSON.stringify({
+          version: 1,
+          goals: [
+            {
+              name: "Launch beta",
+              status: "working",
+              tasks: [
+                {
+                  title: "Plan rollout",
+                  description: "",
+                  status: "planning",
+                  subtasks: [],
+                },
+                {
+                  title: "Queue review",
+                  description: "",
+                  status: "scheduled",
+                  subtasks: [],
+                },
+                {
+                  title: "Ship patch",
+                  description: "",
+                  status: "working",
+                  subtasks: [],
+                },
+                {
+                  title: "Write recap",
+                  description: "",
+                  status: "done",
+                  subtasks: [],
+                },
+              ],
+            },
+          ],
+          tasks: [],
+        }),
+      }),
+    });
+
+    const screen = await mountOverview();
+
+    await page.getByRole("button", { name: "Launch beta" }).click();
+    await expect.element(taskBoard()).toHaveAttribute("data-layout", "stacked");
+
+    await screen.unmount();
+  });
+
+  it("switches the task board back to columns when enough width becomes available", async () => {
+    await page.viewport(900, 1000);
+    currentNativeApi = buildNativeApi({
+      readFile: vi.fn().mockResolvedValue({
+        relativePath: ".t3code/project-goals.json",
+        contents: JSON.stringify({
+          version: 1,
+          goals: [],
+          tasks: [
+            {
+              title: "Plan rollout",
+              description: "",
+              status: "planning",
+              subtasks: [],
+            },
+            {
+              title: "Queue review",
+              description: "",
+              status: "scheduled",
+              subtasks: [],
+            },
+            {
+              title: "Ship patch",
+              description: "",
+              status: "working",
+              subtasks: [],
+            },
+            {
+              title: "Write recap",
+              description: "",
+              status: "done",
+              subtasks: [],
+            },
+          ],
+        }),
+      }),
+    });
+
+    const screen = await mountOverview();
+
+    await expect.element(taskBoard()).toHaveAttribute("data-layout", "stacked");
+
+    await page.viewport(1400, 1000);
+    await expect.element(taskBoard()).toHaveAttribute("data-layout", "columns");
+
+    await screen.unmount();
+  });
+
+  it("recomputes the task board layout when archived visibility adds another category", async () => {
+    currentNativeApi = buildNativeApi({
+      readFile: vi.fn().mockResolvedValue({
+        relativePath: ".t3code/project-goals.json",
+        contents: JSON.stringify({
+          version: 1,
+          goals: [],
+          tasks: [
+            {
+              title: "Plan rollout",
+              description: "",
+              status: "planning",
+              subtasks: [],
+            },
+            {
+              title: "Queue review",
+              description: "",
+              status: "scheduled",
+              subtasks: [],
+            },
+            {
+              title: "Ship patch",
+              description: "",
+              status: "working",
+              subtasks: [],
+            },
+            {
+              title: "Write recap",
+              description: "",
+              status: "done",
+              subtasks: [],
+            },
+            {
+              title: "Archive notes",
+              description: "",
+              status: "archived",
+              subtasks: [],
+            },
+          ],
+        }),
+      }),
+    });
+
+    const screen = await mountOverview();
+
+    await expect.element(taskBoard()).toHaveAttribute("data-layout", "columns");
+    await page.getByRole("switch", { name: "Show archived" }).click();
+    await expect.element(taskBoard()).toHaveAttribute("data-layout", "stacked");
 
     await screen.unmount();
   });

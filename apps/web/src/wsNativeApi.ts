@@ -4,6 +4,7 @@ import {
   ORCHESTRATION_WS_METHODS,
   type ContextMenuItem,
   type NativeApi,
+  ProjectPlanningUpdatedPayload,
   ServerConfigUpdatedPayload,
   TerminalEvent,
   WS_CHANNELS,
@@ -18,8 +19,10 @@ import { WsTransport } from "./wsTransport";
 let instance: { api: NativeApi; transport: WsTransport } | null = null;
 const welcomeListeners = new Set<(payload: WsWelcomePayload) => void>();
 const serverConfigUpdatedListeners = new Set<(payload: ServerConfigUpdatedPayload) => void>();
+const projectPlanningUpdatedListeners = new Set<(payload: ProjectPlanningUpdatedPayload) => void>();
 let lastWelcome: WsWelcomePayload | null = null;
 let lastServerConfigUpdated: ServerConfigUpdatedPayload | null = null;
+let lastProjectPlanningUpdated: ProjectPlanningUpdatedPayload | null = null;
 
 const decodeAndWarnOnFailure = <T>(
   schema: Schema.Schema<T> & { readonly DecodingServices: never },
@@ -81,6 +84,24 @@ export function onServerConfigUpdated(
   };
 }
 
+export function onProjectPlanningUpdated(
+  listener: (payload: ProjectPlanningUpdatedPayload) => void,
+): () => void {
+  projectPlanningUpdatedListeners.add(listener);
+
+  if (lastProjectPlanningUpdated) {
+    try {
+      listener(lastProjectPlanningUpdated);
+    } catch {
+      // Swallow listener errors
+    }
+  }
+
+  return () => {
+    projectPlanningUpdatedListeners.delete(listener);
+  };
+}
+
 export function createWsNativeApi(): NativeApi {
   if (instance) return instance.api;
 
@@ -105,6 +126,18 @@ export function createWsNativeApi(): NativeApi {
     if (!payload) return;
     lastServerConfigUpdated = payload;
     for (const listener of serverConfigUpdatedListeners) {
+      try {
+        listener(payload);
+      } catch {
+        // Swallow listener errors
+      }
+    }
+  });
+  transport.subscribe(WS_CHANNELS.projectPlanningUpdated, (data) => {
+    const payload = decodeAndWarnOnFailure(ProjectPlanningUpdatedPayload, data);
+    if (!payload) return;
+    lastProjectPlanningUpdated = payload;
+    for (const listener of projectPlanningUpdatedListeners) {
       try {
         listener(payload);
       } catch {
@@ -143,6 +176,23 @@ export function createWsNativeApi(): NativeApi {
       readFile: (input) => transport.request(WS_METHODS.projectsReadFile, input),
       searchEntries: (input) => transport.request(WS_METHODS.projectsSearchEntries, input),
       writeFile: (input) => transport.request(WS_METHODS.projectsWriteFile, input),
+    },
+    projectPlanning: {
+      getSnapshot: (input) => transport.request(WS_METHODS.projectPlanningGetSnapshot, input),
+      createGoal: (input) => transport.request(WS_METHODS.projectPlanningCreateGoal, input),
+      updateGoal: (input) => transport.request(WS_METHODS.projectPlanningUpdateGoal, input),
+      deleteGoal: (input) => transport.request(WS_METHODS.projectPlanningDeleteGoal, input),
+      createTask: (input) => transport.request(WS_METHODS.projectPlanningCreateTask, input),
+      updateTask: (input) => transport.request(WS_METHODS.projectPlanningUpdateTask, input),
+      deleteTask: (input) => transport.request(WS_METHODS.projectPlanningDeleteTask, input),
+      createSubtask: (input) => transport.request(WS_METHODS.projectPlanningCreateSubtask, input),
+      updateSubtask: (input) => transport.request(WS_METHODS.projectPlanningUpdateSubtask, input),
+      deleteSubtask: (input) => transport.request(WS_METHODS.projectPlanningDeleteSubtask, input),
+      onUpdated: (callback) =>
+        transport.subscribe(WS_CHANNELS.projectPlanningUpdated, (data) => {
+          const payload = decodeAndWarnOnFailure(ProjectPlanningUpdatedPayload, data);
+          if (payload) callback(payload);
+        }),
     },
     shell: {
       openInEditor: (cwd, editor) =>

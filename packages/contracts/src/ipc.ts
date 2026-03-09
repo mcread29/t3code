@@ -42,6 +42,21 @@ import type {
   OrchestrationEvent,
   OrchestrationReadModel,
 } from "./orchestration";
+import type {
+  ProjectPlanningCreateGoalInput,
+  ProjectPlanningCreateSubtaskInput,
+  ProjectPlanningCreateTaskInput,
+  ProjectPlanningDeleteGoalInput,
+  ProjectPlanningDeleteSubtaskInput,
+  ProjectPlanningDeleteTaskInput,
+  ProjectPlanningGetSnapshotInput,
+  ProjectPlanningMutationResult,
+  ProjectPlanningSnapshotResult,
+  ProjectPlanningUpdateGoalInput,
+  ProjectPlanningUpdateSubtaskInput,
+  ProjectPlanningUpdateTaskInput,
+  ProjectPlanningUpdatedPayload,
+} from "./projectPlanning";
 import { EditorId } from "./editor";
 
 export interface ContextMenuItem<T extends string = string> {
@@ -124,6 +139,25 @@ export interface NativeApi {
     readFile: (input: ProjectReadFileInput) => Promise<ProjectReadFileResult>;
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
+  };
+  projectPlanning: {
+    getSnapshot: (input: ProjectPlanningGetSnapshotInput) => Promise<ProjectPlanningSnapshotResult>;
+    createGoal: (input: ProjectPlanningCreateGoalInput) => Promise<ProjectPlanningMutationResult>;
+    updateGoal: (input: ProjectPlanningUpdateGoalInput) => Promise<ProjectPlanningMutationResult>;
+    deleteGoal: (input: ProjectPlanningDeleteGoalInput) => Promise<ProjectPlanningMutationResult>;
+    createTask: (input: ProjectPlanningCreateTaskInput) => Promise<ProjectPlanningMutationResult>;
+    updateTask: (input: ProjectPlanningUpdateTaskInput) => Promise<ProjectPlanningMutationResult>;
+    deleteTask: (input: ProjectPlanningDeleteTaskInput) => Promise<ProjectPlanningMutationResult>;
+    createSubtask: (
+      input: ProjectPlanningCreateSubtaskInput,
+    ) => Promise<ProjectPlanningMutationResult>;
+    updateSubtask: (
+      input: ProjectPlanningUpdateSubtaskInput,
+    ) => Promise<ProjectPlanningMutationResult>;
+    deleteSubtask: (
+      input: ProjectPlanningDeleteSubtaskInput,
+    ) => Promise<ProjectPlanningMutationResult>;
+    onUpdated: (callback: (event: ProjectPlanningUpdatedPayload) => void) => () => void;
   };
   shell: {
     openInEditor: (cwd: string, editor: EditorId) => Promise<void>;

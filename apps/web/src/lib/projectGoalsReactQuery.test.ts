@@ -6,8 +6,9 @@ import type { NativeApi } from "@t3tools/contracts";
 import * as nativeApi from "../nativeApi";
 import { ProjectGoalsDocumentParseError } from "../projectGoals";
 import {
-  projectGoalsDocumentQueryOptions,
-  projectGoalsWriteMutationOptions,
+  ProjectPlanningRpcError,
+  projectPlanningSnapshotQueryOptions,
+  unwrapMutationResult,
 } from "./projectGoalsReactQuery";
 
 afterEach(() => {
@@ -17,30 +18,44 @@ afterEach(() => {
 describe("projectGoalsReactQuery", () => {
   it("treats a missing file as the default empty document", async () => {
     vi.spyOn(nativeApi, "ensureNativeApi").mockReturnValue({
-      projects: {
-        readFile: vi.fn().mockResolvedValue({
-          relativePath: ".t3code/project-goals.json",
-          contents: null,
+      projectPlanning: {
+        getSnapshot: vi.fn().mockResolvedValue({
+          type: "success",
+          snapshot: {
+            revision: "rev-1",
+            document: {
+              version: 2,
+              goals: [],
+              tasks: [],
+            },
+          },
         }),
       },
     } as unknown as NativeApi);
 
     const queryClient = new QueryClient();
-    const result = await queryClient.fetchQuery(projectGoalsDocumentQueryOptions("/repo/project"));
+    const result = await queryClient.fetchQuery(
+      projectPlanningSnapshotQueryOptions({
+        projectId: "project-1" as never,
+        cwd: "/repo/project",
+      }),
+    );
 
-    expect(result).toEqual({
-      version: 1,
+    expect(result.document).toEqual({
+      version: 2,
       goals: [],
       tasks: [],
     });
   });
 
-  it("throws a typed parse error for invalid JSON", async () => {
+  it("throws a typed parse error for invalid documents", async () => {
     vi.spyOn(nativeApi, "ensureNativeApi").mockReturnValue({
-      projects: {
-        readFile: vi.fn().mockResolvedValue({
-          relativePath: ".t3code/project-goals.json",
-          contents: "{ invalid json",
+      projectPlanning: {
+        getSnapshot: vi.fn().mockResolvedValue({
+          type: "error",
+          code: "invalid_document",
+          message: "invalid",
+          entityType: "document",
         }),
       },
     } as unknown as NativeApi);
@@ -48,54 +63,25 @@ describe("projectGoalsReactQuery", () => {
     const queryClient = new QueryClient();
 
     await expect(
-      queryClient.fetchQuery(projectGoalsDocumentQueryOptions("/repo/project")),
+      queryClient.fetchQuery(
+        projectPlanningSnapshotQueryOptions({
+          projectId: "project-1" as never,
+          cwd: "/repo/project",
+        }),
+      ),
     ).rejects.toBeInstanceOf(ProjectGoalsDocumentParseError);
   });
 
-  it("writes the expected JSON file", async () => {
-    const writeFile = vi.fn().mockResolvedValue({
-      relativePath: ".t3code/project-goals.json",
-    });
-    vi.spyOn(nativeApi, "ensureNativeApi").mockReturnValue({
-      projects: {
-        writeFile,
-      },
-    } as unknown as NativeApi);
-
-    const queryClient = new QueryClient();
-    const mutation = projectGoalsWriteMutationOptions({
-      cwd: "/repo/project",
-      queryClient,
-    });
-
-    if (!mutation.mutationFn) {
-      throw new Error("Expected write mutation function");
-    }
-
-    await mutation.mutationFn(
-      {
-        version: 1,
-        goals: [{ name: "Goal", status: "planning", tasks: [] }],
-        tasks: [],
-      },
-      {} as never,
-    );
-
-    expect(writeFile).toHaveBeenCalledWith({
-      cwd: "/repo/project",
-      relativePath: ".t3code/project-goals.json",
-      contents: `{
-  "version": 1,
-  "goals": [
-    {
-      "name": "Goal",
-      "status": "planning",
-      "tasks": []
-    }
-  ],
-  "tasks": []
-}
-`,
-    });
+  it("throws a typed RPC error for mutation conflicts", () => {
+    expect(() =>
+      unwrapMutationResult({
+        type: "error",
+        code: "conflict",
+        message: "stale revision",
+        entityType: "document",
+        expectedRevision: "rev-1",
+        actualRevision: "rev-2",
+      }),
+    ).toThrow(ProjectPlanningRpcError);
   });
 });

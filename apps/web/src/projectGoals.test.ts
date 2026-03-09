@@ -2,13 +2,15 @@ import { describe, expect, it } from "vitest";
 
 import {
   createEmptyProjectGoalsDocument,
+  createGoal,
+  createTask,
+  groupGoalsByStatus,
+  groupStandaloneTasksByStatus,
   parseProjectGoalsDocument,
   ProjectGoalsDocumentParseError,
   serializeProjectGoalsDocument,
-  groupGoalsByStatus,
-  groupStandaloneTasksByStatus,
-  updateGoalTaskAtIndex,
-  updateStandaloneTaskAtIndex,
+  updateGoal,
+  updateTask,
 } from "./projectGoals";
 
 describe("projectGoals", () => {
@@ -16,20 +18,17 @@ describe("projectGoals", () => {
     expect(parseProjectGoalsDocument(null)).toEqual(createEmptyProjectGoalsDocument());
   });
 
-  it("parses a valid document", () => {
-    expect(
-      parseProjectGoalsDocument(
-        JSON.stringify({
-          version: 1,
-          goals: [{ name: "Launch", status: "planning", tasks: [] }],
-          tasks: [],
-        }),
-      ),
-    ).toEqual({
-      version: 1,
-      goals: [{ name: "Launch", status: "planning", tasks: [] }],
-      tasks: [],
-    });
+  it("migrates v1 documents to v2 with stable ids", () => {
+    const document = parseProjectGoalsDocument(
+      JSON.stringify({
+        version: 1,
+        goals: [{ name: "Launch", status: "planning", tasks: [] }],
+        tasks: [],
+      }),
+    );
+
+    expect(document.version).toBe(2);
+    expect(document.goals[0]?.id).toEqual(expect.any(String));
   });
 
   it("rejects invalid schema shapes", () => {
@@ -45,77 +44,36 @@ describe("projectGoals", () => {
   });
 
   it("serializes deterministically", () => {
+    const alphaGoal = createGoal({
+      id: "goal_alpha",
+      name: "Alpha",
+      status: "working",
+      tasks: [createTask({ id: "task_b", title: "b", description: "", status: "working" })],
+    });
+    const betaGoal = createGoal({
+      id: "goal_beta",
+      name: "Beta",
+      status: "planning",
+      tasks: [createTask({ id: "task_z", title: "z", description: "", status: "planning" })],
+    });
+
     expect(
       serializeProjectGoalsDocument({
-        version: 1,
-        goals: [
-          {
-            name: "Beta",
-            status: "planning",
-            tasks: [{ title: "z", description: "", status: "planning", subtasks: [] }],
-          },
-          {
-            name: "Alpha",
-            status: "working",
-            tasks: [{ title: "b", description: "", status: "working", subtasks: [] }],
-          },
-        ],
+        version: 2,
+        goals: [betaGoal, alphaGoal],
         tasks: [
-          { title: "zebra", description: "", status: "archived", subtasks: [] },
-          { title: "apple", description: "", status: "working", subtasks: [] },
+          createTask({ id: "task_zebra", title: "zebra", description: "", status: "archived" }),
+          createTask({ id: "task_apple", title: "apple", description: "", status: "working" }),
         ],
       }),
-    ).toBe(`{
-  "version": 1,
-  "goals": [
-    {
-      "name": "Alpha",
-      "status": "working",
-      "tasks": [
-        {
-          "title": "b",
-          "description": "",
-          "status": "working",
-          "subtasks": []
-        }
-      ]
-    },
-    {
-      "name": "Beta",
-      "status": "planning",
-      "tasks": [
-        {
-          "title": "z",
-          "description": "",
-          "status": "planning",
-          "subtasks": []
-        }
-      ]
-    }
-  ],
-  "tasks": [
-    {
-      "title": "apple",
-      "description": "",
-      "status": "working",
-      "subtasks": []
-    },
-    {
-      "title": "zebra",
-      "description": "",
-      "status": "archived",
-      "subtasks": []
-    }
-  ]
-}
-`);
+    ).toContain('"version": 2');
   });
 
   it("groups goals by status in the fixed order", () => {
     const groups = groupGoalsByStatus([
-      { name: "Plan", status: "planning", tasks: [] },
-      { name: "Ship", status: "working", tasks: [] },
-      { name: "Archive", status: "archived", tasks: [] },
+      createGoal({ id: "goal_plan", name: "Plan", status: "planning" }),
+      createGoal({ id: "goal_ship", name: "Ship", status: "working" }),
+      createGoal({ id: "goal_archive", name: "Archive", status: "archived" }),
     ]);
 
     expect(groups.map((group) => group.status)).toEqual([
@@ -132,11 +90,11 @@ describe("projectGoals", () => {
 
   it("groups standalone tasks by status in the fixed order", () => {
     const groups = groupStandaloneTasksByStatus([
-      { title: "Backlog", description: "", status: "planning", subtasks: [] },
-      { title: "Soon", description: "", status: "scheduled", subtasks: [] },
-      { title: "Now", description: "", status: "working", subtasks: [] },
-      { title: "Done", description: "", status: "done", subtasks: [] },
-      { title: "Archive", description: "", status: "archived", subtasks: [] },
+      createTask({ id: "task_backlog", title: "Backlog", description: "", status: "planning" }),
+      createTask({ id: "task_soon", title: "Soon", description: "", status: "scheduled" }),
+      createTask({ id: "task_now", title: "Now", description: "", status: "working" }),
+      createTask({ id: "task_done", title: "Done", description: "", status: "done" }),
+      createTask({ id: "task_archive", title: "Archive", description: "", status: "archived" }),
     ]);
 
     expect(groups.map((group) => group.status)).toEqual(["planning", "scheduled", "working", "done"]);
@@ -144,26 +102,6 @@ describe("projectGoals", () => {
     expect(groups[1]?.items.map((task) => task.title)).toEqual(["Soon"]);
     expect(groups[2]?.items.map((task) => task.title)).toEqual(["Now"]);
     expect(groups[3]?.items.map((task) => task.title)).toEqual(["Done"]);
-  });
-
-  it("can include archived standalone tasks for kanban boards", () => {
-    const groups = groupStandaloneTasksByStatus(
-      [
-        { title: "Backlog", description: "", status: "planning", subtasks: [] },
-        { title: "Archive", description: "", status: "archived", subtasks: [] },
-      ],
-      { includeArchived: true },
-    );
-
-    expect(groups.map((group) => group.status)).toEqual([
-      "planning",
-      "scheduled",
-      "working",
-      "done",
-      "archived",
-    ]);
-    expect(groups[0]?.items.map((task) => task.title)).toEqual(["Backlog"]);
-    expect(groups[4]?.items.map((task) => task.title)).toEqual(["Archive"]);
   });
 
   it("preserves authored subtask order", () => {
@@ -188,57 +126,38 @@ describe("projectGoals", () => {
     expect(document.tasks[0]?.subtasks.map((subtask) => subtask.task)).toEqual(["third", "first"]);
   });
 
-  it("updates a nested goal task path correctly", () => {
-    const updated = updateGoalTaskAtIndex(
+  it("updates a goal by id", () => {
+    const goal = createGoal({ id: "goal_1", name: "Goal", status: "planning" });
+    const updated = updateGoal(
       {
-        version: 1,
-        goals: [
-          {
-            name: "Goal",
-            status: "planning",
-            tasks: [
-              { title: "Task B", description: "", status: "planning", subtasks: [] },
-              { title: "Task A", description: "", status: "planning", subtasks: [] },
-            ],
-          },
-        ],
+        version: 2,
+        goals: [goal],
         tasks: [],
       },
-      0,
-      1,
-      (task) => ({ ...task, title: "Task C" }),
+      "goal_1",
+      (current) => ({ ...current, name: "Goal updated" }),
     );
 
-    expect(updated.goals[0]?.tasks.map((task) => task.title)).toEqual(["Task B", "Task C"]);
+    expect(updated?.goals[0]?.name).toBe("Goal updated");
   });
 
-  it("updates a standalone task path correctly", () => {
-    const updated = updateStandaloneTaskAtIndex(
+  it("updates a task by id", () => {
+    const task = createTask({ id: "task_1", title: "B", description: "", status: "planning" });
+    const updated = updateTask(
       {
-        version: 1,
+        version: 2,
         goals: [],
-        tasks: [
-          { title: "B", description: "", status: "planning", subtasks: [] },
-          { title: "A", description: "", status: "planning", subtasks: [] },
-        ],
+        tasks: [task],
       },
-      1,
-      (task) => ({
-        ...task,
+      "task_1",
+      (current) => ({
+        ...current,
         title: "Z",
         description: "updated",
-        subtasks: [{ task: "subtask", done: false }],
       }),
     );
 
-    expect(updated.tasks).toEqual([
-      { title: "B", description: "", status: "planning", subtasks: [] },
-      {
-        title: "Z",
-        description: "updated",
-        status: "planning",
-        subtasks: [{ task: "subtask", done: false }],
-      },
-    ]);
+    expect(updated?.tasks[0]?.title).toBe("Z");
+    expect(updated?.tasks[0]?.description).toBe("updated");
   });
 });

@@ -1,5 +1,5 @@
 import type { ProjectId } from "@t3tools/contracts";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArchiveIcon,
   ArchiveRestoreIcon,
@@ -15,20 +15,13 @@ import React from "react";
 import { ensureNativeApi } from "~/nativeApi";
 import {
   createEmptyProjectGoalsDocument,
-  createGoal,
-  createSubtask,
-  createTask,
   groupTaskItemsByStatus,
-  normalizeProjectGoalsDocument,
   PROJECT_GOAL_STATUS_LABELS,
   projectTaskBoardStatuses,
   type ProjectGoal,
   type ProjectGoalStatus,
   ProjectGoalsDocumentParseError,
   type ProjectTask,
-  updateGoalAtIndex,
-  updateGoalTaskAtIndex,
-  updateStandaloneTaskAtIndex,
 } from "~/projectGoals";
 import { useStore } from "~/store";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
@@ -57,9 +50,10 @@ import {
 import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import {
-  projectGoalsDocumentQueryOptions,
-  projectGoalsQueryKeys,
-  projectGoalsWriteMutationOptions,
+  projectPlanningQueryKeys,
+  projectPlanningSnapshotQueryOptions,
+  ProjectPlanningRpcError,
+  unwrapMutationResult,
 } from "~/lib/projectGoalsReactQuery";
 import TaskKanbanBoard from "./TaskKanbanBoard";
 import type { ProjectOverviewSection } from "./ProjectOverviewLayout";
@@ -68,7 +62,7 @@ type GoalEditorState =
   | { mode: "create" }
   | {
       mode: "edit";
-      goalIndex: number;
+      goalId: string;
       goal: ProjectGoal;
     };
 
@@ -77,28 +71,28 @@ type TaskEditorState =
   | {
       mode: "create";
       scope: "goal";
-      goalIndex: number;
+      goalId: string;
     }
   | {
       mode: "edit";
       scope: "standalone";
-      taskIndex: number;
+      taskId: string;
       task: ProjectTask;
     }
   | {
       mode: "edit";
       scope: "goal";
-      goalIndex: number;
-      taskIndex: number;
+      goalId: string;
+      taskId: string;
       task: ProjectTask;
     };
 
-function standaloneTaskRowKey(taskIndex: number): string {
-  return `standalone:${taskIndex}`;
+function standaloneTaskRowKey(taskId: string): string {
+  return `standalone:${taskId}`;
 }
 
-function goalTaskRowKey(goalIndex: number, taskIndex: number): string {
-  return `goal:${goalIndex}:task:${taskIndex}`;
+function goalTaskRowKey(goalId: string, taskId: string): string {
+  return `goal:${goalId}:task:${taskId}`;
 }
 
 function statusBadgeVariant(status: ProjectGoalStatus) {
@@ -134,31 +128,7 @@ function groupTaskEntries(
     includeArchived?: boolean;
   },
 ) {
-  return groupTaskItemsByStatus(
-    tasks.map((task, index) => ({ task, index })),
-    (entry) => entry.task.status,
-    options,
-  );
-}
-
-function findStandaloneTaskIndexByShape(tasks: readonly ProjectTask[], task: ProjectTask): number {
-  return tasks.findIndex(
-    (candidate) =>
-      candidate.title === task.title &&
-      candidate.description === task.description &&
-      candidate.status === task.status &&
-      candidate.subtasks.length === task.subtasks.length,
-  );
-}
-
-function findGoalTaskIndexByShape(goal: ProjectGoal, task: ProjectTask): number {
-  return goal.tasks.findIndex(
-    (candidate) =>
-      candidate.title === task.title &&
-      candidate.description === task.description &&
-      candidate.status === task.status &&
-      candidate.subtasks.length === task.subtasks.length,
-  );
+  return groupTaskItemsByStatus(tasks, (task) => task.status, options);
 }
 
 function StatusBadge({ status }: { status: ProjectGoalStatus }) {
@@ -370,7 +340,9 @@ function TaskCard({
   onEdit,
   onDelete,
   onStatusChange,
-  onSave,
+  onCreateSubtask,
+  onUpdateSubtask,
+  onDeleteSubtask,
   addSubtaskLabel = "Add Subtask",
 }: {
   task: ProjectTask;
@@ -379,7 +351,12 @@ function TaskCard({
   onEdit: () => void;
   onDelete: () => void;
   onStatusChange: (status: ProjectGoalStatus) => Promise<void>;
-  onSave: (nextTask: ProjectTask) => Promise<void>;
+  onCreateSubtask: (task: string) => Promise<void>;
+  onUpdateSubtask: (
+    subtaskId: string,
+    patch: { task?: string; done?: boolean },
+  ) => Promise<void>;
+  onDeleteSubtask: (subtaskId: string) => Promise<void>;
   addSubtaskLabel?: string;
 }) {
   const [newSubtask, setNewSubtask] = React.useState("");
@@ -394,10 +371,7 @@ function TaskCard({
   const submitNewSubtask = async () => {
     const trimmed = newSubtask.trim();
     if (trimmed.length === 0) return;
-    await onSave({
-      ...task,
-      subtasks: [...task.subtasks, createSubtask({ task: trimmed })],
-    });
+    await onCreateSubtask(trimmed);
     setNewSubtask("");
   };
 
@@ -405,12 +379,9 @@ function TaskCard({
     if (editingSubtaskIndex === null) return;
     const trimmed = editingSubtaskText.trim();
     if (trimmed.length === 0) return;
-    await onSave({
-      ...task,
-      subtasks: task.subtasks.map((subtask, index) =>
-        index === editingSubtaskIndex ? { ...subtask, task: trimmed } : subtask,
-      ),
-    });
+    const subtask = task.subtasks[editingSubtaskIndex];
+    if (!subtask) return;
+    await onUpdateSubtask(subtask.id, { task: trimmed });
     setEditingSubtaskIndex(null);
     setEditingSubtaskText("");
   };
@@ -483,29 +454,17 @@ function TaskCard({
                   <div className="space-y-2">
                     {task.subtasks.map((subtask, subtaskIndex) => {
                       const isEditing = editingSubtaskIndex === subtaskIndex;
-                      const subtaskKey = `${subtask.task}-${subtask.done ? "done" : "todo"}-${
-                        task.subtasks
-                          .slice(0, subtaskIndex)
-                          .filter(
-                            (entry) => entry.task === subtask.task && entry.done === subtask.done,
-                          ).length
-                      }`;
                       return (
                         <div
-                          key={subtaskKey}
+                          key={subtask.id}
                           className="flex items-center gap-3 rounded-lg border border-border/80 px-3 py-2"
                         >
                           <Checkbox
                             checked={subtask.done}
                             aria-label={`Mark ${subtask.task} complete`}
                             onCheckedChange={async (checked) => {
-                              await onSave({
-                                ...task,
-                                subtasks: task.subtasks.map((entry, index) =>
-                                  index === subtaskIndex
-                                    ? { ...entry, done: Boolean(checked) }
-                                    : entry,
-                                ),
+                              await onUpdateSubtask(subtask.id, {
+                                done: Boolean(checked),
                               });
                             }}
                           />
@@ -563,12 +522,7 @@ function TaskCard({
                               <Button
                                 size="xs"
                                 variant="ghost"
-                                onClick={() =>
-                                  void onSave({
-                                    ...task,
-                                    subtasks: task.subtasks.filter((_, index) => index !== subtaskIndex),
-                                  })
-                                }
+                                onClick={() => void onDeleteSubtask(subtask.id)}
                               >
                                 <Trash2Icon />
                                 Remove
@@ -633,21 +587,26 @@ export default function ProjectOverviewContent({
   const [showArchivedStandaloneTasks, setShowArchivedStandaloneTasks] = React.useState(false);
   const [showArchivedGoalTasks, setShowArchivedGoalTasks] = React.useState(false);
 
-  const projectGoalsQuery = useQuery(projectGoalsDocumentQueryOptions(project?.cwd ?? null));
-  const writeMutation = useMutation(
-    projectGoalsWriteMutationOptions({
+  const projectGoalsQuery = useQuery(
+    projectPlanningSnapshotQueryOptions({
+      projectId,
       cwd: project?.cwd ?? null,
-      queryClient,
     }),
   );
+  const snapshotQueryKey = projectPlanningQueryKeys.snapshot(projectId, project?.cwd ?? null);
 
-  const persistDocument = React.useCallback(
-    async (nextDocument: ReturnType<typeof normalizeProjectGoalsDocument>) => {
+  const runPlanningMutation = React.useCallback(
+    async (
+      run: () => Promise<import("@t3tools/contracts").ProjectPlanningMutationResult>,
+    ) => {
       try {
-        await writeMutation.mutateAsync(nextDocument);
-        queryClient.setQueryData(projectGoalsQueryKeys.document(project?.cwd ?? null), nextDocument);
-        return nextDocument;
+        const result = unwrapMutationResult(await run());
+        queryClient.setQueryData(snapshotQueryKey, result.snapshot);
+        return result;
       } catch (error) {
+        if (error instanceof ProjectPlanningRpcError && error.code === "conflict") {
+          await queryClient.invalidateQueries({ queryKey: snapshotQueryKey });
+        }
         toastManager.add({
           type: "error",
           title: "Failed to save project goals",
@@ -656,7 +615,18 @@ export default function ProjectOverviewContent({
         throw error;
       }
     },
-    [project?.cwd, queryClient, writeMutation],
+    [queryClient, snapshotQueryKey],
+  );
+
+  const planningTarget = React.useMemo(
+    () => ({
+      projectId,
+      ...(project?.cwd ? { workspaceRoot: project.cwd } : {}),
+      ...(projectGoalsQuery.data?.revision
+        ? { expectedRevision: projectGoalsQuery.data.revision }
+        : {}),
+    }),
+    [project?.cwd, projectGoalsQuery.data?.revision, projectId],
   );
 
   React.useEffect(() => {
@@ -681,11 +651,12 @@ export default function ProjectOverviewContent({
     onTaskEditorOpenChange(false);
   }, [onTaskEditorOpenChange]);
 
-  const document = projectGoalsQuery.data;
+  const document = projectGoalsQuery.data?.document;
   const standaloneHasArchivedTasks = document?.tasks.some((task) => task.status === "archived") ?? false;
   const hasAnyStandaloneTasks = (document?.tasks.length ?? 0) > 0;
-  const selectedGoalIndex = activeSection.kind === "goal" ? activeSection.goalIndex : null;
-  const selectedGoal = selectedGoalIndex === null ? null : document?.goals[selectedGoalIndex] ?? null;
+  const selectedGoalId = activeSection.kind === "goal" ? activeSection.goalId : null;
+  const selectedGoal =
+    selectedGoalId === null ? null : document?.goals.find((goal) => goal.id === selectedGoalId) ?? null;
   const selectedGoalHasArchivedTasks =
     selectedGoal?.tasks.some((task) => task.status === "archived") ?? false;
 
@@ -751,7 +722,11 @@ export default function ProjectOverviewContent({
                       "Initialize a new .t3code/project-goals.json file and overwrite the invalid contents?",
                     );
                     if (!confirmed) return;
-                    await persistDocument(createEmptyProjectGoalsDocument());
+                    await api.projects.writeFile({
+                      cwd: project.cwd,
+                      relativePath: ".t3code/project-goals.json",
+                      contents: JSON.stringify(createEmptyProjectGoalsDocument(), null, 2).concat("\n"),
+                    });
                     await projectGoalsQuery.refetch();
                   }}
                 >
@@ -785,21 +760,23 @@ export default function ProjectOverviewContent({
   const saveGoalEditor = async (input: { name: string; status: ProjectGoalStatus }) => {
     if (!goalEditorState) return;
     if (goalEditorState.mode === "create") {
-      const nextGoal = createGoal({ name: input.name, status: input.status });
-      const nextDocument = normalizeProjectGoalsDocument({
-        ...document,
-        goals: [...document.goals, nextGoal],
-      });
-      await persistDocument(nextDocument);
+      await runPlanningMutation(() =>
+        api.projectPlanning.createGoal({
+          ...planningTarget,
+          name: input.name,
+          status: input.status,
+        }),
+      );
       return;
     }
 
-    await persistDocument(
-      updateGoalAtIndex(document, goalEditorState.goalIndex, (goal) => ({
-        ...goal,
+    await runPlanningMutation(() =>
+      api.projectPlanning.updateGoal({
+        ...planningTarget,
+        goalId: goalEditorState.goalId,
         name: input.name,
         status: input.status,
-      })),
+      }),
     );
   };
 
@@ -811,61 +788,54 @@ export default function ProjectOverviewContent({
     if (!taskEditorState) return;
 
     if (taskEditorState.mode === "create" && taskEditorState.scope === "standalone") {
-      const nextTask = createTask(input);
-      const nextDocument = normalizeProjectGoalsDocument({
-        ...document,
-        tasks: [...document.tasks, nextTask],
-      });
-      await persistDocument(nextDocument);
-      const nextTaskIndex = findStandaloneTaskIndexByShape(nextDocument.tasks, nextTask);
-      if (nextTaskIndex >= 0) {
-        openTaskRow(standaloneTaskRowKey(nextTaskIndex));
-      }
+      const result = await runPlanningMutation(() =>
+        api.projectPlanning.createTask({
+          ...planningTarget,
+          title: input.title,
+          description: input.description,
+          status: input.status,
+        }),
+      );
+      openTaskRow(standaloneTaskRowKey(result.changedId));
       return;
     }
 
     if (taskEditorState.mode === "create" && taskEditorState.scope === "goal") {
-      const nextTask = createTask(input);
-      const nextDocument = updateGoalAtIndex(document, taskEditorState.goalIndex, (goal) => ({
-        ...goal,
-        tasks: [...goal.tasks, nextTask],
-      }));
-      await persistDocument(nextDocument);
-      const nextGoal = nextDocument.goals[taskEditorState.goalIndex];
-      if (nextGoal) {
-        const nextTaskIndex = findGoalTaskIndexByShape(nextGoal, nextTask);
-        if (nextTaskIndex >= 0) {
-          openTaskRow(goalTaskRowKey(taskEditorState.goalIndex, nextTaskIndex));
-        }
-      }
+      const result = await runPlanningMutation(() =>
+        api.projectPlanning.createTask({
+          ...planningTarget,
+          goalId: taskEditorState.goalId,
+          title: input.title,
+          description: input.description,
+          status: input.status,
+        }),
+      );
+      openTaskRow(goalTaskRowKey(taskEditorState.goalId, result.changedId));
       return;
     }
 
     if (taskEditorState.mode === "edit" && taskEditorState.scope === "standalone") {
-      await persistDocument(
-        updateStandaloneTaskAtIndex(document, taskEditorState.taskIndex, (task) => ({
-          ...task,
+      await runPlanningMutation(() =>
+        api.projectPlanning.updateTask({
+          ...planningTarget,
+          taskId: taskEditorState.taskId,
           title: input.title,
           description: input.description,
           status: input.status,
-        })),
+        }),
       );
       return;
     }
 
     if (taskEditorState.mode === "edit" && taskEditorState.scope === "goal") {
-      await persistDocument(
-        updateGoalTaskAtIndex(
-          document,
-          taskEditorState.goalIndex,
-          taskEditorState.taskIndex,
-          (task) => ({
-            ...task,
-            title: input.title,
-            description: input.description,
-            status: input.status,
-          }),
-        ),
+      await runPlanningMutation(() =>
+        api.projectPlanning.updateTask({
+          ...planningTarget,
+          taskId: taskEditorState.taskId,
+          title: input.title,
+          description: input.description,
+          status: input.status,
+        }),
       );
     }
   };
@@ -896,22 +866,22 @@ export default function ProjectOverviewContent({
                 title: "No visible standalone tasks",
                 description: "Archived tasks are hidden. Turn on Show archived to view them.",
               }}
-              renderTask={({ task, index: taskIndex }) => (
+              renderTask={(task) => (
                 <TaskCard
-                  key={`${task.title}-${taskIndex}`}
+                  key={task.id}
                   task={task}
-                  open={openTaskRows[standaloneTaskRowKey(taskIndex)] ?? false}
+                  open={openTaskRows[standaloneTaskRowKey(task.id)] ?? false}
                   onOpenChange={(open) =>
                     setOpenTaskRows((current) => ({
                       ...current,
-                      [standaloneTaskRowKey(taskIndex)]: open,
+                      [standaloneTaskRowKey(task.id)]: open,
                     }))
                   }
                   onEdit={() =>
                     setTaskEditorState({
                       mode: "edit",
                       scope: "standalone",
-                      taskIndex,
+                      taskId: task.id,
                       task,
                     })
                   }
@@ -920,30 +890,53 @@ export default function ProjectOverviewContent({
                       `Delete the task "${task.title || "Untitled task"}"?`,
                     );
                     if (!confirmed) return;
-                    await persistDocument(
-                      normalizeProjectGoalsDocument({
-                        ...document,
-                        tasks: document.tasks.filter((_, index) => index !== taskIndex),
+                    await runPlanningMutation(() =>
+                      api.projectPlanning.deleteTask({
+                        ...planningTarget,
+                        taskId: task.id,
                       }),
                     );
                   }}
                   onStatusChange={async (status) => {
-                    await persistDocument(
-                      updateStandaloneTaskAtIndex(document, taskIndex, (entry) => ({
-                        ...entry,
+                    await runPlanningMutation(() =>
+                      api.projectPlanning.updateTask({
+                        ...planningTarget,
+                        taskId: task.id,
                         status,
-                      })),
+                      }),
                     );
                   }}
-                  onSave={async (nextTask) => {
-                    await persistDocument(
-                      updateStandaloneTaskAtIndex(document, taskIndex, () => nextTask),
-                    );
-                  }}
+                  onCreateSubtask={(subtaskTask) =>
+                    runPlanningMutation(() =>
+                      api.projectPlanning.createSubtask({
+                        ...planningTarget,
+                        taskId: task.id,
+                        task: subtaskTask,
+                      }),
+                    ).then(() => undefined)
+                  }
+                  onUpdateSubtask={(subtaskId, patch) =>
+                    runPlanningMutation(() =>
+                      api.projectPlanning.updateSubtask({
+                        ...planningTarget,
+                        subtaskId,
+                        ...(patch.task !== undefined ? { task: patch.task } : {}),
+                        ...(patch.done !== undefined ? { done: patch.done } : {}),
+                      }),
+                    ).then(() => undefined)
+                  }
+                  onDeleteSubtask={(subtaskId) =>
+                    runPlanningMutation(() =>
+                      api.projectPlanning.deleteSubtask({
+                        ...planningTarget,
+                        subtaskId,
+                      }),
+                    ).then(() => undefined)
+                  }
                 />
               )}
             />
-          ) : selectedGoal && selectedGoalIndex !== null ? (
+          ) : selectedGoal ? (
             <div className="space-y-4">
               <div className="flex flex-col gap-3 rounded-2xl border border-border bg-card/80 px-4 py-4 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0">
@@ -961,7 +954,7 @@ export default function ProjectOverviewContent({
                     onClick={() =>
                       setGoalEditorState({
                         mode: "edit",
-                        goalIndex: selectedGoalIndex,
+                        goalId: selectedGoal.id,
                         goal: selectedGoal,
                       })
                     }
@@ -976,7 +969,7 @@ export default function ProjectOverviewContent({
                       setTaskEditorState({
                         mode: "create",
                         scope: "goal",
-                        goalIndex: selectedGoalIndex,
+                        goalId: selectedGoal.id,
                       })
                     }
                   >
@@ -987,11 +980,12 @@ export default function ProjectOverviewContent({
                     size="xs"
                     variant="outline"
                     onClick={() =>
-                      void persistDocument(
-                        updateGoalAtIndex(document, selectedGoalIndex, (entry) => ({
-                          ...entry,
-                          status: entry.status === "archived" ? "planning" : "archived",
-                        })),
+                      void runPlanningMutation(() =>
+                        api.projectPlanning.updateGoal({
+                          ...planningTarget,
+                          goalId: selectedGoal.id,
+                          status: selectedGoal.status === "archived" ? "planning" : "archived",
+                        }),
                       )
                     }
                   >
@@ -1015,10 +1009,10 @@ export default function ProjectOverviewContent({
                         `Delete the goal "${selectedGoal.name || "Untitled goal"}" and all nested tasks?`,
                       );
                       if (!confirmed) return;
-                      await persistDocument(
-                        normalizeProjectGoalsDocument({
-                          ...document,
-                          goals: document.goals.filter((_, index) => index !== selectedGoalIndex),
+                      await runPlanningMutation(() =>
+                        api.projectPlanning.deleteGoal({
+                          ...planningTarget,
+                          goalId: selectedGoal.id,
                         }),
                       );
                     }}
@@ -1048,30 +1042,30 @@ export default function ProjectOverviewContent({
                     setTaskEditorState({
                       mode: "create",
                       scope: "goal",
-                      goalIndex: selectedGoalIndex,
+                      goalId: selectedGoal.id,
                     }),
                 }}
                 filteredEmptyState={{
                   title: "No visible tasks for this goal",
                   description: "Archived tasks are hidden. Turn on Show archived to view them.",
                 }}
-                renderTask={({ task, index: taskIndex }) => (
+                renderTask={(task) => (
                   <TaskCard
-                    key={`${selectedGoalIndex}-${task.title}-${taskIndex}`}
+                    key={task.id}
                     task={task}
-                    open={openTaskRows[goalTaskRowKey(selectedGoalIndex, taskIndex)] ?? false}
+                    open={openTaskRows[goalTaskRowKey(selectedGoal.id, task.id)] ?? false}
                     onOpenChange={(open) =>
                       setOpenTaskRows((current) => ({
                         ...current,
-                        [goalTaskRowKey(selectedGoalIndex, taskIndex)]: open,
+                        [goalTaskRowKey(selectedGoal.id, task.id)]: open,
                       }))
                     }
                     onEdit={() =>
                       setTaskEditorState({
                         mode: "edit",
                         scope: "goal",
-                        goalIndex: selectedGoalIndex,
-                        taskIndex,
+                        goalId: selectedGoal.id,
+                        taskId: task.id,
                         task,
                       })
                     }
@@ -1080,26 +1074,49 @@ export default function ProjectOverviewContent({
                         `Delete the task "${task.title || "Untitled task"}"?`,
                       );
                       if (!confirmed) return;
-                      await persistDocument(
-                        updateGoalAtIndex(document, selectedGoalIndex, (entry) => ({
-                          ...entry,
-                          tasks: entry.tasks.filter((_, index) => index !== taskIndex),
-                        })),
+                      await runPlanningMutation(() =>
+                        api.projectPlanning.deleteTask({
+                          ...planningTarget,
+                          taskId: task.id,
+                        }),
                       );
                     }}
                     onStatusChange={async (status) => {
-                      await persistDocument(
-                        updateGoalTaskAtIndex(document, selectedGoalIndex, taskIndex, (entry) => ({
-                          ...entry,
+                      await runPlanningMutation(() =>
+                        api.projectPlanning.updateTask({
+                          ...planningTarget,
+                          taskId: task.id,
                           status,
-                        })),
+                        }),
                       );
                     }}
-                    onSave={async (nextTask) => {
-                      await persistDocument(
-                        updateGoalTaskAtIndex(document, selectedGoalIndex, taskIndex, () => nextTask),
-                      );
-                    }}
+                    onCreateSubtask={(subtaskTask) =>
+                      runPlanningMutation(() =>
+                        api.projectPlanning.createSubtask({
+                          ...planningTarget,
+                          taskId: task.id,
+                          task: subtaskTask,
+                        }),
+                      ).then(() => undefined)
+                    }
+                    onUpdateSubtask={(subtaskId, patch) =>
+                      runPlanningMutation(() =>
+                        api.projectPlanning.updateSubtask({
+                          ...planningTarget,
+                          subtaskId,
+                          ...(patch.task !== undefined ? { task: patch.task } : {}),
+                          ...(patch.done !== undefined ? { done: patch.done } : {}),
+                        }),
+                      ).then(() => undefined)
+                    }
+                    onDeleteSubtask={(subtaskId) =>
+                      runPlanningMutation(() =>
+                        api.projectPlanning.deleteSubtask({
+                          ...planningTarget,
+                          subtaskId,
+                        }),
+                      ).then(() => undefined)
+                    }
                   />
                 )}
               />

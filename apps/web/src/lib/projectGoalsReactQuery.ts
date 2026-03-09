@@ -1,61 +1,97 @@
-import { mutationOptions, queryOptions, type QueryClient } from "@tanstack/react-query";
+import type {
+  ProjectId,
+  ProjectPlanningErrorCode,
+  ProjectPlanningMutationResult,
+  ProjectPlanningSnapshot,
+  ProjectPlanningSnapshotResult,
+} from "@t3tools/contracts";
+import { queryOptions } from "@tanstack/react-query";
 
 import { ensureNativeApi } from "../nativeApi";
-import {
-  parseProjectGoalsDocument,
-  PROJECT_GOALS_FILE_PATH,
-  type ProjectGoalsDocument,
-  serializeProjectGoalsDocument,
-} from "../projectGoals";
+import { ProjectGoalsDocumentParseError, type ProjectGoalsDocument } from "../projectGoals";
 
-export const projectGoalsQueryKeys = {
-  all: ["project-goals"] as const,
-  document: (cwd: string | null) => ["project-goals", "document", cwd] as const,
+export class ProjectPlanningRpcError extends Error {
+  override readonly name = "ProjectPlanningRpcError";
+
+  constructor(
+    readonly code: ProjectPlanningErrorCode,
+    message: string,
+    readonly details: ProjectPlanningSnapshotResult | ProjectPlanningMutationResult,
+  ) {
+    super(message);
+  }
+}
+
+function unwrapSnapshotResult(result: ProjectPlanningSnapshotResult): ProjectPlanningSnapshot {
+  if (result.type === "success") {
+    return result.snapshot;
+  }
+
+  if (result.code === "invalid_document") {
+    throw new ProjectGoalsDocumentParseError(result.message, "invalid-schema");
+  }
+
+  throw new ProjectPlanningRpcError(result.code, result.message, result);
+}
+
+export function unwrapMutationResult(result: ProjectPlanningMutationResult): {
+  changedId: string;
+  snapshot: ProjectPlanningSnapshot;
+} {
+  if (result.type === "success") {
+    return result;
+  }
+
+  throw new ProjectPlanningRpcError(result.code, result.message, result);
+}
+
+export const projectPlanningQueryKeys = {
+  all: ["project-planning"] as const,
+  snapshot: (projectId: ProjectId | null, cwd: string | null) =>
+    ["project-planning", "snapshot", projectId ?? null, cwd ?? null] as const,
 };
 
-export const projectGoalsMutationKeys = {
-  write: (cwd: string | null) => ["project-goals", "mutation", "write", cwd] as const,
-};
-
-export function projectGoalsDocumentQueryOptions(cwd: string | null) {
+export function projectPlanningSnapshotQueryOptions(input: {
+  projectId: ProjectId | null;
+  cwd: string | null;
+}) {
   return queryOptions({
-    queryKey: projectGoalsQueryKeys.document(cwd),
+    queryKey: projectPlanningQueryKeys.snapshot(input.projectId, input.cwd),
     queryFn: async () => {
       const api = ensureNativeApi();
-      if (!cwd) {
+      if (!input.projectId && !input.cwd) {
         throw new Error("Project goals are unavailable.");
       }
-      const result = await api.projects.readFile({
-        cwd,
-        relativePath: PROJECT_GOALS_FILE_PATH,
+
+      const result = await api.projectPlanning.getSnapshot({
+        ...(input.projectId ? { projectId: input.projectId } : {}),
+        ...(input.cwd ? { workspaceRoot: input.cwd } : {}),
       });
-      return parseProjectGoalsDocument(result.contents);
+      return unwrapSnapshotResult(result);
     },
-    enabled: cwd !== null,
+    enabled: input.projectId !== null || input.cwd !== null,
   });
 }
 
-export function projectGoalsWriteMutationOptions(input: {
-  cwd: string | null;
-  queryClient: QueryClient;
-}) {
-  return mutationOptions({
-    mutationKey: projectGoalsMutationKeys.write(input.cwd),
-    mutationFn: async (document: ProjectGoalsDocument) => {
+export function projectGoalsDocumentQueryOptions(
+  projectId: ProjectId | null,
+  cwd: string | null,
+) {
+  return queryOptions({
+    queryKey: ["project-planning", "document", projectId ?? null, cwd ?? null] as const,
+    queryFn: async (): Promise<ProjectGoalsDocument> => {
       const api = ensureNativeApi();
-      if (!input.cwd) {
+      if (!projectId && !cwd) {
         throw new Error("Project goals are unavailable.");
       }
-      return api.projects.writeFile({
-        cwd: input.cwd,
-        relativePath: PROJECT_GOALS_FILE_PATH,
-        contents: serializeProjectGoalsDocument(document),
-      });
+      const snapshot = unwrapSnapshotResult(
+        await api.projectPlanning.getSnapshot({
+          ...(projectId ? { projectId } : {}),
+          ...(cwd ? { workspaceRoot: cwd } : {}),
+        }),
+      );
+      return snapshot.document;
     },
-    onSettled: async () => {
-      await input.queryClient.invalidateQueries({
-        queryKey: projectGoalsQueryKeys.document(input.cwd),
-      });
-    },
+    enabled: projectId !== null || cwd !== null,
   });
 }

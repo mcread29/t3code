@@ -1,6 +1,7 @@
 import { type ChildProcessWithoutNullStreams, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
+import os from "node:os";
 import readline from "node:readline";
 
 import {
@@ -27,6 +28,7 @@ import {
   isCodexCliVersionSupported,
   parseCodexCliVersion,
 } from "./provider/codexCliVersion";
+import { readManagedProjectPlanningMcpUrl } from "./projectPlanning/Layers/ProjectPlanningMcpServer";
 
 type PendingRequestKey = string;
 
@@ -542,18 +544,15 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
 
       const codexOptions = readCodexProviderOptions(input);
       const codexBinaryPath = codexOptions.binaryPath ?? "codex";
-      const codexHomePath = codexOptions.homePath;
+      const codexHomePath = resolveCodexHomePath(codexOptions.homePath);
       this.assertSupportedCodexCliVersion({
         binaryPath: codexBinaryPath,
         cwd: resolvedCwd,
         ...(codexHomePath ? { homePath: codexHomePath } : {}),
       });
-      const child = spawn(codexBinaryPath, ["app-server"], {
+      const child = spawn(codexBinaryPath, buildCodexCliArgs(["app-server"]), {
         cwd: resolvedCwd,
-        env: {
-          ...process.env,
-          ...(codexHomePath ? { CODEX_HOME: codexHomePath } : {}),
-        },
+        env: buildCodexProcessEnv(codexHomePath),
         stdio: ["pipe", "pipe", "pipe"],
         shell: process.platform === "win32",
       });
@@ -1507,6 +1506,50 @@ function normalizeProviderThreadId(value: string | undefined): string | undefine
   return brandIfNonEmpty(value, (normalized) => normalized);
 }
 
+function expandCodexHomePath(input: string | undefined): string | undefined {
+  const normalized = input?.trim();
+  if (!normalized) {
+    return undefined;
+  }
+  if (normalized === "~") {
+    return os.homedir();
+  }
+  if (normalized.startsWith("~/") || normalized.startsWith("~\\")) {
+    return `${os.homedir()}${normalized.slice(1)}`;
+  }
+  return normalized;
+}
+
+function resolveCodexHomePath(overrideHomePath: string | undefined): string | undefined {
+  return overrideHomePath ?? expandCodexHomePath(process.env.CODEX_HOME);
+}
+
+function buildCodexProcessEnv(homePath: string | undefined): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  const resolvedHomePath = resolveCodexHomePath(homePath);
+  if (resolvedHomePath) {
+    env.CODEX_HOME = resolvedHomePath;
+  } else {
+    delete env.CODEX_HOME;
+  }
+  return env;
+}
+
+export function buildCodexCliArgs(
+  baseArgs: ReadonlyArray<string>,
+  projectPlanningMcpUrl: string | undefined = readManagedProjectPlanningMcpUrl(),
+): string[] {
+  if (!projectPlanningMcpUrl) {
+    return [...baseArgs];
+  }
+
+  return [
+    "-c",
+    `mcp_servers.project_planning.url="${projectPlanningMcpUrl}"`,
+    ...baseArgs,
+  ];
+}
+
 function readCodexProviderOptions(input: CodexAppServerStartSessionInput): {
   readonly binaryPath?: string;
   readonly homePath?: string;
@@ -1515,9 +1558,10 @@ function readCodexProviderOptions(input: CodexAppServerStartSessionInput): {
   if (!options) {
     return {};
   }
+  const homePath = expandCodexHomePath(options.homePath);
   return {
     ...(options.binaryPath ? { binaryPath: options.binaryPath } : {}),
-    ...(options.homePath ? { homePath: options.homePath } : {}),
+    ...(homePath ? { homePath } : {}),
   };
 }
 
@@ -1526,12 +1570,9 @@ function assertSupportedCodexCliVersion(input: {
   readonly cwd: string;
   readonly homePath?: string;
 }): void {
-  const result = spawnSync(input.binaryPath, ["--version"], {
+  const result = spawnSync(input.binaryPath, buildCodexCliArgs(["--version"]), {
     cwd: input.cwd,
-    env: {
-      ...process.env,
-      ...(input.homePath ? { CODEX_HOME: input.homePath } : {}),
-    },
+    env: buildCodexProcessEnv(input.homePath),
     encoding: "utf8",
     shell: process.platform === "win32",
     stdio: ["ignore", "pipe", "pipe"],

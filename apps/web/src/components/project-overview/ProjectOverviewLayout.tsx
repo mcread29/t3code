@@ -1,5 +1,5 @@
 import type { ProjectId } from "@t3tools/contracts";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PanelLeftIcon, PlusIcon } from "lucide-react";
 import React from "react";
 
@@ -11,18 +11,24 @@ import {
   SheetPopup,
   SheetTitle,
 } from "../ui/sheet";
-import { projectGoalsDocumentQueryOptions } from "~/lib/projectGoalsReactQuery";
+import { onProjectPlanningUpdated } from "~/wsNativeApi";
+import { projectPlanningQueryKeys, projectPlanningSnapshotQueryOptions } from "~/lib/projectGoalsReactQuery";
 import { useStore } from "~/store";
 import ProjectOverviewContent from "./ProjectOverviewContent";
 import ProjectOverviewSidebar from "./ProjectOverviewSidebar";
 
 export type ProjectOverviewSection =
   | { kind: "standalone-tasks" }
-  | { kind: "goal"; goalIndex: number };
+  | { kind: "goal"; goalId: string };
 
 export default function ProjectOverviewLayout({ projectId }: { projectId: ProjectId }) {
   const project = useStore((store) => store.projects.find((entry) => entry.id === projectId) ?? null);
-  const projectGoalsQuery = useQuery(projectGoalsDocumentQueryOptions(project?.cwd ?? null));
+  const projectGoalsQuery = useQuery(
+    projectPlanningSnapshotQueryOptions({
+      projectId,
+      cwd: project?.cwd ?? null,
+    }),
+  );
   const [desktopSidebarExpanded, setDesktopSidebarExpanded] = React.useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = React.useState(false);
   const [goalEditorOpen, setGoalEditorOpen] = React.useState(false);
@@ -31,14 +37,15 @@ export default function ProjectOverviewLayout({ projectId }: { projectId: Projec
     kind: "standalone-tasks",
   });
 
-  const goals = projectGoalsQuery.data?.goals ?? [];
+  const goals = projectGoalsQuery.data?.document.goals;
+  const queryClient = useQueryClient();
 
   const selectStandaloneTasks = React.useCallback(() => {
     setActiveSection({ kind: "standalone-tasks" });
     setMobileSidebarOpen(false);
   }, []);
-  const selectGoal = React.useCallback((goalIndex: number) => {
-    setActiveSection({ kind: "goal", goalIndex });
+  const selectGoal = React.useCallback((goalId: string) => {
+    setActiveSection({ kind: "goal", goalId });
     setMobileSidebarOpen(false);
   }, []);
 
@@ -47,15 +54,31 @@ export default function ProjectOverviewLayout({ projectId }: { projectId: Projec
       return;
     }
 
-    if (goals.length === 0) {
+    const goalIds = goals?.map((goal) => goal.id) ?? [];
+    if (goalIds.length === 0) {
       setActiveSection({ kind: "standalone-tasks" });
       return;
     }
 
-    if (activeSection.goalIndex > goals.length - 1) {
-      setActiveSection({ kind: "goal", goalIndex: goals.length - 1 });
+    if (!goalIds.includes(activeSection.goalId)) {
+      setActiveSection({ kind: "standalone-tasks" });
     }
-  }, [activeSection, goals.length]);
+  }, [activeSection, goals]);
+
+  React.useEffect(() => {
+    if (!project?.cwd) {
+      return;
+    }
+
+    return onProjectPlanningUpdated((event) => {
+      if (event.projectId !== projectId && event.workspaceRoot !== project.cwd) {
+        return;
+      }
+      void queryClient.invalidateQueries({
+        queryKey: projectPlanningQueryKeys.snapshot(projectId, project.cwd),
+      });
+    });
+  }, [project?.cwd, projectId, queryClient]);
 
   let content: React.ReactNode;
   switch (activeSection.kind) {
@@ -97,7 +120,7 @@ export default function ProjectOverviewLayout({ projectId }: { projectId: Projec
           <div className="flex h-full w-full flex-col">
             <ProjectOverviewSidebar
               activeSection={activeSection}
-              goals={goals}
+              goals={goals ?? []}
               onSelectGoal={selectGoal}
               onSelectStandaloneTasks={selectStandaloneTasks}
               orientation="vertical"
@@ -160,7 +183,7 @@ export default function ProjectOverviewLayout({ projectId }: { projectId: Projec
             <ProjectOverviewSidebar
               activeSection={activeSection}
               collapsed={!desktopSidebarExpanded}
-              goals={goals}
+              goals={goals ?? []}
               onSelectGoal={selectGoal}
               onSelectStandaloneTasks={selectStandaloneTasks}
               orientation="vertical"

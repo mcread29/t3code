@@ -35,6 +35,8 @@ import { GitServiceLive } from "./git/Layers/GitService";
 import { BunPtyAdapterLive } from "./terminal/Layers/BunPTY";
 import { NodePtyAdapterLive } from "./terminal/Layers/NodePTY";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService";
+import { ProjectPlanningLive } from "./projectPlanning/Layers/ProjectPlanning";
+import { ProjectPlanningMcpServerLive } from "./projectPlanning/Layers/ProjectPlanningMcpServer";
 
 export function makeServerProviderLayer(): Layer.Layer<
   ProviderService,
@@ -119,11 +121,20 @@ export function makeServerRuntimeServicesLayer() {
     Layer.provideMerge(textGenerationLayer),
   );
 
-  return Layer.mergeAll(
+  const baseRuntimeLayer = Layer.mergeAll(
     orchestrationReactorLayer,
     gitCoreLayer,
     gitManagerLayer,
     terminalLayer,
     KeybindingsLive,
   ).pipe(Layer.provideMerge(NodeServices.layer));
+
+  const projectPlanningLayer = ProjectPlanningLive.pipe(Layer.provideMerge(baseRuntimeLayer));
+  const runtimeWithProjectPlanningLayer = Layer.mergeAll(baseRuntimeLayer, projectPlanningLayer);
+
+  const projectPlanningMcpLayer = ProjectPlanningMcpServerLive.pipe(
+    Layer.provideMerge(runtimeWithProjectPlanningLayer),
+  );
+
+  return Layer.mergeAll(runtimeWithProjectPlanningLayer, projectPlanningMcpLayer);
 }

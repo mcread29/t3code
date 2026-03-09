@@ -5,31 +5,6 @@ import type { ProjectGoal } from "~/projectGoals";
 
 import type { ProjectOverviewSection } from "./ProjectOverviewLayout";
 
-function goalEntryKey(goals: readonly ProjectGoal[], goal: ProjectGoal): string {
-  let duplicateCount = 0;
-
-  for (const candidate of goals) {
-    if (candidate === goal) {
-      break;
-    }
-
-    if (
-      candidate.name === goal.name &&
-      candidate.status === goal.status &&
-      candidate.tasks.length === goal.tasks.length
-    ) {
-      duplicateCount += 1;
-    }
-  }
-
-  return [
-    goal.name,
-    goal.status,
-    goal.tasks.map((task) => `${task.title}:${task.status}`).join("|"),
-    duplicateCount,
-  ].join("::");
-}
-
 export default function ProjectOverviewSidebar({
   activeSection,
   collapsed = false,
@@ -41,7 +16,7 @@ export default function ProjectOverviewSidebar({
   activeSection: ProjectOverviewSection;
   collapsed?: boolean;
   goals: readonly ProjectGoal[];
-  onSelectGoal: (goalIndex: number) => void;
+  onSelectGoal: (goalId: string) => void;
   onSelectStandaloneTasks: () => void;
   orientation: "horizontal" | "vertical";
 }) {
@@ -83,15 +58,15 @@ export default function ProjectOverviewSidebar({
       </button>
 
       {goals.map((goal, goalIndex) => {
-        const isActive = activeSection.kind === "goal" && activeSection.goalIndex === goalIndex;
+        const isActive = activeSection.kind === "goal" && activeSection.goalId === goal.id;
         const goalName = goal.name || `Untitled goal ${goalIndex + 1}`;
         return (
           <button
-            key={goalEntryKey(goals, goal)}
+            key={goal.id}
             aria-label={goalName}
             className={navButtonClassName(isActive)}
             data-active={isActive}
-            onClick={() => onSelectGoal(goalIndex)}
+            onClick={() => onSelectGoal(goal.id)}
             title={goalName}
             type="button"
           >

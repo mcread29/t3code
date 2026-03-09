@@ -73,6 +73,7 @@ import {
 import { parseBase64DataUrl } from "./imageMime.ts";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { expandHomePath } from "./os-jank.ts";
+import { ProjectPlanning } from "./projectPlanning/Services/ProjectPlanning.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -217,6 +218,7 @@ export type ServerRuntimeServices =
   | GitCore
   | TerminalManager
   | Keybindings
+  | ProjectPlanning
   | Open
   | AnalyticsService;
 
@@ -254,6 +256,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const gitManager = yield* GitManager;
   const terminalManager = yield* TerminalManager;
   const keybindingsManager = yield* Keybindings;
+  const projectPlanning = yield* ProjectPlanning;
   const providerHealth = yield* ProviderHealth;
   const git = yield* GitCore;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -637,6 +640,14 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     }),
   ).pipe(Effect.forkIn(subscriptionsScope));
 
+  yield* Stream.runForEach(projectPlanning.changes, (event) =>
+    broadcastPush({
+      type: "push",
+      channel: WS_CHANNELS.projectPlanningUpdated,
+      data: event,
+    }),
+  ).pipe(Effect.forkIn(subscriptionsScope));
+
   yield* Scope.provide(orchestrationReactor.start, subscriptionsScope);
 
   let welcomeBootstrapProjectId: ProjectId | undefined;
@@ -830,6 +841,56 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           relativePath: target.relativePath,
           contents,
         };
+      }
+
+      case WS_METHODS.projectPlanningGetSnapshot: {
+        const body = stripRequestTag(request.body);
+        return yield* projectPlanning.getSnapshot(body);
+      }
+
+      case WS_METHODS.projectPlanningCreateGoal: {
+        const body = stripRequestTag(request.body);
+        return yield* projectPlanning.createGoal(body);
+      }
+
+      case WS_METHODS.projectPlanningUpdateGoal: {
+        const body = stripRequestTag(request.body);
+        return yield* projectPlanning.updateGoal(body);
+      }
+
+      case WS_METHODS.projectPlanningDeleteGoal: {
+        const body = stripRequestTag(request.body);
+        return yield* projectPlanning.deleteGoal(body);
+      }
+
+      case WS_METHODS.projectPlanningCreateTask: {
+        const body = stripRequestTag(request.body);
+        return yield* projectPlanning.createTask(body);
+      }
+
+      case WS_METHODS.projectPlanningUpdateTask: {
+        const body = stripRequestTag(request.body);
+        return yield* projectPlanning.updateTask(body);
+      }
+
+      case WS_METHODS.projectPlanningDeleteTask: {
+        const body = stripRequestTag(request.body);
+        return yield* projectPlanning.deleteTask(body);
+      }
+
+      case WS_METHODS.projectPlanningCreateSubtask: {
+        const body = stripRequestTag(request.body);
+        return yield* projectPlanning.createSubtask(body);
+      }
+
+      case WS_METHODS.projectPlanningUpdateSubtask: {
+        const body = stripRequestTag(request.body);
+        return yield* projectPlanning.updateSubtask(body);
+      }
+
+      case WS_METHODS.projectPlanningDeleteSubtask: {
+        const body = stripRequestTag(request.body);
+        return yield* projectPlanning.deleteSubtask(body);
       }
 
       case WS_METHODS.shellOpenInEditor: {
