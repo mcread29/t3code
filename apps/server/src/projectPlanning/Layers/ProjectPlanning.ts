@@ -10,6 +10,7 @@ import type {
   ProjectPlanningUpdatedPayload,
 } from "@t3tools/contracts";
 import {
+  attachThreadToTaskInDocument,
   addGoal,
   addStandaloneTask,
   addSubtaskToTask,
@@ -17,6 +18,7 @@ import {
   createGoal,
   createSubtask,
   createTask,
+  detachThreadFromTaskInDocument,
   deleteGoal,
   deleteSubtask,
   deleteTask,
@@ -192,7 +194,7 @@ export const ProjectPlanningLive = Layer.effect(
       );
       if (!exists) {
         const document = normalizeProjectGoalsDocument({
-          version: 2,
+          version: 3,
           goals: [],
           tasks: [],
         });
@@ -453,6 +455,70 @@ export const ProjectPlanningLive = Layer.effect(
         Effect.promise(() =>
           mutate(input, input.expectedRevision, async (state) => {
             const document = deleteTask(state.document, input.taskId);
+            if (!document) {
+              return errorResult({
+                code: "not_found",
+                entityType: "task",
+                entityId: input.taskId,
+                message: `Unknown task id: ${input.taskId}.`,
+              });
+            }
+            await writeState(state, document);
+            return successMutation(document, input.taskId);
+          }),
+        ),
+      attachThreadToTask: (input) =>
+        Effect.promise(() =>
+          mutate(input, input.expectedRevision, async (state) => {
+            const task = findTaskById(state.document, input.taskId);
+            if (!task) {
+              return errorResult({
+                code: "not_found",
+                entityType: "task",
+                entityId: input.taskId,
+                message: `Unknown task id: ${input.taskId}.`,
+              });
+            }
+            if (task.task.linkedThreadIds.includes(input.threadId)) {
+              return successMutation(state.document, input.taskId);
+            }
+            const document = attachThreadToTaskInDocument(
+              state.document,
+              input.taskId,
+              input.threadId,
+            );
+            if (!document) {
+              return errorResult({
+                code: "not_found",
+                entityType: "task",
+                entityId: input.taskId,
+                message: `Unknown task id: ${input.taskId}.`,
+              });
+            }
+            await writeState(state, document);
+            return successMutation(document, input.taskId);
+          }),
+        ),
+      detachThreadFromTask: (input) =>
+        Effect.promise(() =>
+          mutate(input, input.expectedRevision, async (state) => {
+            const task = findTaskById(state.document, input.taskId);
+            if (!task) {
+              return errorResult({
+                code: "not_found",
+                entityType: "task",
+                entityId: input.taskId,
+                message: `Unknown task id: ${input.taskId}.`,
+              });
+            }
+            if (!task.task.linkedThreadIds.includes(input.threadId)) {
+              return successMutation(state.document, input.taskId);
+            }
+            const document = detachThreadFromTaskInDocument(
+              state.document,
+              input.taskId,
+              input.threadId,
+            );
             if (!document) {
               return errorResult({
                 code: "not_found",

@@ -878,6 +878,16 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return yield* projectPlanning.deleteTask(body);
       }
 
+      case WS_METHODS.projectPlanningAttachThreadToTask: {
+        const body = stripRequestTag(request.body);
+        return yield* projectPlanning.attachThreadToTask(body);
+      }
+
+      case WS_METHODS.projectPlanningDetachThreadFromTask: {
+        const body = stripRequestTag(request.body);
+        return yield* projectPlanning.detachThreadFromTask(body);
+      }
+
       case WS_METHODS.projectPlanningCreateSubtask: {
         const body = stripRequestTag(request.body);
         return yield* projectPlanning.createSubtask(body);

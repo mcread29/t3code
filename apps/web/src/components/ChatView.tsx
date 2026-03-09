@@ -48,8 +48,13 @@ import {
   useVirtualizer,
 } from "@tanstack/react-virtual";
 import { gitBranchesQueryOptions, gitCreateWorktreeMutationOptions } from "~/lib/gitReactQuery";
+import { projectPlanningSnapshotQueryOptions } from "~/lib/projectGoalsReactQuery";
 import { projectSearchEntriesQueryOptions } from "~/lib/projectReactQuery";
 import { serverConfigQueryOptions, serverQueryKeys } from "~/lib/serverReactQuery";
+import {
+  findLinkedTasksForThread,
+  toProjectOverviewTaskSearch,
+} from "~/lib/taskThreadLinks";
 
 import { isElectron } from "../env";
 import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch";
@@ -146,6 +151,7 @@ import {
   CopyIcon,
   CheckIcon,
   ZapIcon,
+  PlusIcon,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
@@ -337,7 +343,7 @@ function buildLocalDraftThread(
     id: threadId,
     codexThreadId: null,
     projectId: draftThread.projectId,
-    title: "New thread",
+    title: draftThread.title?.trim().length ? draftThread.title : "New thread",
     model: fallbackModel,
     runtimeMode: draftThread.runtimeMode,
     interactionMode: draftThread.interactionMode,
@@ -758,6 +764,21 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const activeLatestTurn = activeThread?.latestTurn ?? null;
   const latestTurnSettled = isLatestTurnSettled(activeLatestTurn, activeThread?.session ?? null);
   const activeProject = projects.find((p) => p.id === activeThread?.projectId);
+  const projectPlanningQuery = useQuery(
+    projectPlanningSnapshotQueryOptions({
+      projectId: activeProject?.id ?? null,
+      cwd: activeProject?.cwd ?? null,
+    }),
+  );
+  const linkedTasks = useMemo(
+    () =>
+      findLinkedTasksForThread(
+        projectPlanningQuery.data?.document,
+        activeThread?.id ?? null,
+      ),
+    [activeThread?.id, projectPlanningQuery.data?.document],
+  );
+  const [attachTaskDialogOpen, setAttachTaskDialogOpen] = useState(false);
 
   useEffect(() => {
     if (!activeThread?.id) return;
@@ -1315,12 +1336,91 @@ export default function ChatView({ threadId }: ChatViewProps) {
       to: "/$threadId",
       params: { threadId },
       replace: true,
-      search: (previous) => {
-        const rest = stripDiffSearchParams(previous);
-        return diffOpen ? rest : { ...rest, diff: "1" };
-      },
+      search: diffOpen ? {} : { diff: "1" },
     });
   }, [diffOpen, navigate, threadId]);
+  const attachableTaskOptions = useMemo(() => {
+    const document = projectPlanningQuery.data?.document;
+    if (!document || !activeThread) {
+      return [];
+    }
+
+    const linkedTaskIds = new Set(linkedTasks.map((task) => task.task.id));
+    const options: Array<{ id: string; label: string }> = [];
+    for (const task of document.tasks) {
+      if (!linkedTaskIds.has(task.id)) {
+        options.push({
+          id: task.id,
+          label: task.title.trim().length > 0 ? task.title : "Untitled standalone task",
+        });
+      }
+    }
+    for (const goal of document.goals) {
+      for (const task of goal.tasks) {
+        if (!linkedTaskIds.has(task.id)) {
+          options.push({
+            id: task.id,
+            label: `${goal.name || "Untitled goal"} / ${task.title || "Untitled task"}`,
+          });
+        }
+      }
+    }
+    return options.toSorted((left, right) => left.label.localeCompare(right.label) || left.id.localeCompare(right.id));
+  }, [activeThread, linkedTasks, projectPlanningQuery.data?.document]);
+
+  const attachTaskToThread = useCallback(
+    async (taskId: string) => {
+      const api = readNativeApi();
+      if (!api || !activeThread || !activeProject) {
+        return;
+      }
+      await api.projectPlanning.attachThreadToTask({
+        projectId: activeProject.id,
+        workspaceRoot: activeProject.cwd,
+        expectedRevision: projectPlanningQuery.data?.revision,
+        taskId,
+        threadId: activeThread.id,
+      });
+      await projectPlanningQuery.refetch();
+    },
+    [activeProject, activeThread, projectPlanningQuery],
+  );
+
+  const detachTaskFromThread = useCallback(
+    async (taskId: string) => {
+      const api = readNativeApi();
+      if (!api || !activeThread || !activeProject) {
+        return;
+      }
+      await api.projectPlanning.detachThreadFromTask({
+        projectId: activeProject.id,
+        workspaceRoot: activeProject.cwd,
+        expectedRevision: projectPlanningQuery.data?.revision,
+        taskId,
+        threadId: activeThread.id,
+      });
+      await projectPlanningQuery.refetch();
+    },
+    [activeProject, activeThread, projectPlanningQuery],
+  );
+
+  const openLinkedTask = useCallback(
+    async (taskId: string) => {
+      if (!activeProject) {
+        return;
+      }
+      const location = linkedTasks.find((task) => task.task.id === taskId);
+      if (!location) {
+        return;
+      }
+      await navigate({
+        to: "/project/$projectId",
+        params: { projectId: activeProject.id },
+        search: toProjectOverviewTaskSearch(location),
+      });
+    },
+    [activeProject, linkedTasks, navigate],
+  );
 
   const envLocked = Boolean(
     activeThread &&
@@ -3452,6 +3552,19 @@ export default function ChatView({ threadId }: ChatViewProps) {
           activeThreadId={activeThread.id}
           activeThreadTitle={activeThread.title}
           activeProjectName={activeProject?.name}
+          linkedTasks={linkedTasks.map((task) => {
+            if (task.scope === "goal") {
+              return {
+                id: task.task.id,
+                label: `${task.goal.name || "Untitled goal"} / ${task.task.title || "Untitled task"}`,
+                goalId: task.goal.id,
+              };
+            }
+            return {
+              id: task.task.id,
+              label: task.task.title || "Untitled task",
+            };
+          })}
           isGitRepo={isGitRepo}
           openInCwd={activeThread.worktreePath ?? activeProject?.cwd ?? null}
           activeProjectScripts={activeProject?.scripts}
@@ -3469,6 +3582,13 @@ export default function ChatView({ threadId }: ChatViewProps) {
           onAddProjectScript={saveProjectScript}
           onUpdateProjectScript={updateProjectScript}
           onDeleteProjectScript={deleteProjectScript}
+          onAttachTask={() => setAttachTaskDialogOpen(true)}
+          onOpenLinkedTask={(taskId) => {
+            void openLinkedTask(taskId);
+          }}
+          onUnlinkTask={(taskId) => {
+            void detachTaskFromThread(taskId);
+          }}
           onToggleDiff={onToggleDiff}
         />
       </header>
@@ -3478,6 +3598,12 @@ export default function ChatView({ threadId }: ChatViewProps) {
       <ThreadErrorBanner
         error={activeThread.error}
         onDismiss={() => setThreadError(activeThread.id, null)}
+      />
+      <AttachTaskDialog
+        open={attachTaskDialogOpen}
+        options={attachableTaskOptions}
+        onAttach={attachTaskToThread}
+        onClose={() => setAttachTaskDialogOpen(false)}
       />
       {/* Main content area with optional plan sidebar */}
       <div className="flex min-h-0 flex-1">
@@ -4099,6 +4225,11 @@ interface ChatHeaderProps {
   activeThreadId: ThreadId;
   activeThreadTitle: string;
   activeProjectName: string | undefined;
+  linkedTasks: Array<{
+    goalId?: string;
+    id: string;
+    label: string;
+  }>;
   isGitRepo: boolean;
   openInCwd: string | null;
   activeProjectScripts: ProjectScript[] | undefined;
@@ -4112,6 +4243,9 @@ interface ChatHeaderProps {
   onAddProjectScript: (input: NewProjectScriptInput) => Promise<void>;
   onUpdateProjectScript: (scriptId: string, input: NewProjectScriptInput) => Promise<void>;
   onDeleteProjectScript: (scriptId: string) => Promise<void>;
+  onAttachTask: () => void;
+  onOpenLinkedTask: (taskId: string) => void;
+  onUnlinkTask: (taskId: string) => void;
   onToggleDiff: () => void;
 }
 
@@ -4119,6 +4253,7 @@ const ChatHeader = memo(function ChatHeader({
   activeThreadId,
   activeThreadTitle,
   activeProjectName,
+  linkedTasks,
   isGitRepo,
   openInCwd,
   activeProjectScripts,
@@ -4132,77 +4267,192 @@ const ChatHeader = memo(function ChatHeader({
   onAddProjectScript,
   onUpdateProjectScript,
   onDeleteProjectScript,
+  onAttachTask,
+  onOpenLinkedTask,
+  onUnlinkTask,
   onToggleDiff,
 }: ChatHeaderProps) {
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-2">
-      <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
-        <SidebarTrigger className="size-7 shrink-0 md:hidden" />
-        <h2
-          className="min-w-0 shrink truncate text-sm font-medium text-foreground"
-          title={activeThreadTitle}
-        >
-          {activeThreadTitle}
-        </h2>
-        {activeProjectName && (
-          <Badge variant="outline" className="max-w-28 shrink-0 truncate">
-            {activeProjectName}
-          </Badge>
-        )}
-        {activeProjectName && !isGitRepo && (
-          <Badge variant="outline" className="shrink-0 text-[10px] text-amber-700">
-            No Git
-          </Badge>
-        )}
+    <div className="flex min-w-0 flex-1 flex-col gap-2">
+      <div className="flex min-w-0 flex-1 items-center gap-2">
+        <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
+          <SidebarTrigger className="size-7 shrink-0 md:hidden" />
+          <h2
+            className="min-w-0 shrink truncate text-sm font-medium text-foreground"
+            title={activeThreadTitle}
+          >
+            {activeThreadTitle}
+          </h2>
+          {activeProjectName && (
+            <Badge variant="outline" className="max-w-28 shrink-0 truncate">
+              {activeProjectName}
+            </Badge>
+          )}
+          {activeProjectName && !isGitRepo && (
+            <Badge variant="outline" className="shrink-0 text-[10px] text-amber-700">
+              No Git
+            </Badge>
+          )}
+        </div>
+        <div className="@container/header-actions flex min-w-0 flex-1 items-center justify-end gap-2 @sm/header-actions:gap-3">
+          {activeProjectScripts && (
+            <ProjectScriptsControl
+              scripts={activeProjectScripts}
+              keybindings={keybindings}
+              preferredScriptId={preferredScriptId}
+              onRunScript={onRunProjectScript}
+              onAddScript={onAddProjectScript}
+              onUpdateScript={onUpdateProjectScript}
+              onDeleteScript={onDeleteProjectScript}
+            />
+          )}
+          {activeProjectName && (
+            <OpenInPicker
+              keybindings={keybindings}
+              availableEditors={availableEditors}
+              openInCwd={openInCwd}
+            />
+          )}
+          {activeProjectName && <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />}
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Toggle
+                  className="shrink-0"
+                  pressed={diffOpen}
+                  onPressedChange={onToggleDiff}
+                  aria-label="Toggle diff panel"
+                  variant="outline"
+                  size="xs"
+                  disabled={!isGitRepo}
+                >
+                  <DiffIcon className="size-3" />
+                </Toggle>
+              }
+            />
+            <TooltipPopup side="bottom">
+              {!isGitRepo
+                ? "Diff panel is unavailable because this project is not a git repository."
+                : diffToggleShortcutLabel
+                  ? `Toggle diff panel (${diffToggleShortcutLabel})`
+                  : "Toggle diff panel"}
+            </TooltipPopup>
+          </Tooltip>
+        </div>
       </div>
-      <div className="@container/header-actions flex min-w-0 flex-1 items-center justify-end gap-2 @sm/header-actions:gap-3">
-        {activeProjectScripts && (
-          <ProjectScriptsControl
-            scripts={activeProjectScripts}
-            keybindings={keybindings}
-            preferredScriptId={preferredScriptId}
-            onRunScript={onRunProjectScript}
-            onAddScript={onAddProjectScript}
-            onUpdateScript={onUpdateProjectScript}
-            onDeleteScript={onDeleteProjectScript}
-          />
-        )}
-        {activeProjectName && (
-          <OpenInPicker
-            keybindings={keybindings}
-            availableEditors={availableEditors}
-            openInCwd={openInCwd}
-          />
-        )}
-        {activeProjectName && <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />}
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Toggle
-                className="shrink-0"
-                pressed={diffOpen}
-                onPressedChange={onToggleDiff}
-                aria-label="Toggle diff panel"
-                variant="outline"
-                size="xs"
-                disabled={!isGitRepo}
-              >
-                <DiffIcon className="size-3" />
-              </Toggle>
-            }
-          />
-          <TooltipPopup side="bottom">
-            {!isGitRepo
-              ? "Diff panel is unavailable because this project is not a git repository."
-              : diffToggleShortcutLabel
-                ? `Toggle diff panel (${diffToggleShortcutLabel})`
-                : "Toggle diff panel"}
-          </TooltipPopup>
-        </Tooltip>
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <span className="text-xs font-medium text-muted-foreground">Linked tasks</span>
+        {linkedTasks.map((task) => (
+          <div key={task.id} className="flex items-center gap-1 rounded-full border border-border px-2 py-1">
+            <button
+              type="button"
+              className="max-w-48 truncate text-xs text-foreground"
+              onClick={() => onOpenLinkedTask(task.id)}
+            >
+              {task.label}
+            </button>
+            <button
+              type="button"
+              className="text-xs text-muted-foreground hover:text-foreground"
+              aria-label={`Unlink ${task.label}`}
+              onClick={() => onUnlinkTask(task.id)}
+            >
+              <XIcon className="size-3" />
+            </button>
+          </div>
+        ))}
+        <Button size="xs" variant="outline" onClick={onAttachTask}>
+          <PlusIcon className="size-3" />
+          Attach Task
+        </Button>
       </div>
     </div>
   );
 });
+
+function AttachTaskDialog({
+  open,
+  options,
+  onAttach,
+  onClose,
+}: {
+  open: boolean;
+  options: Array<{ id: string; label: string }>;
+  onAttach: (taskId: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState("");
+  const [pendingTaskId, setPendingTaskId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      setQuery("");
+      setPendingTaskId(null);
+    }
+  }, [open]);
+
+  const filteredOptions = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    if (normalizedQuery.length === 0) {
+      return options;
+    }
+    return options.filter((option) => option.label.toLowerCase().includes(normalizedQuery));
+  }, [options, query]);
+
+  return (
+    <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
+      <DialogPopup>
+        <DialogHeader>
+          <DialogTitle>Attach Task</DialogTitle>
+          <DialogDescription>Link this thread to a project task.</DialogDescription>
+        </DialogHeader>
+        <DialogPanel className="space-y-4">
+          <Input
+            value={query}
+            onChange={(event) => setQuery(event.currentTarget.value)}
+            placeholder="Search tasks"
+            autoFocus
+          />
+          <div className="max-h-80 space-y-2 overflow-y-auto">
+            {filteredOptions.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">
+                No attachable tasks found.
+              </div>
+            ) : (
+              filteredOptions.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  className="flex w-full items-center justify-between gap-3 rounded-lg border border-border px-3 py-3 text-left hover:bg-accent"
+                  disabled={pendingTaskId !== null}
+                  onClick={async () => {
+                    setPendingTaskId(option.id);
+                    try {
+                      await onAttach(option.id);
+                      onClose();
+                    } finally {
+                      setPendingTaskId(null);
+                    }
+                  }}
+                >
+                  <span className="truncate text-sm text-foreground">{option.label}</span>
+                  <Badge variant="outline">
+                    {pendingTaskId === option.id ? "Linking..." : "task"}
+                  </Badge>
+                </button>
+              ))
+            )}
+          </div>
+        </DialogPanel>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} type="button">
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogPopup>
+    </Dialog>
+  );
+}
 
 const ThreadErrorBanner = memo(function ThreadErrorBanner({
   error,

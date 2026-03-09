@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  attachThreadToTaskInDocument,
   createEmptyProjectGoalsDocument,
   createGoal,
   createTask,
+  detachThreadFromTaskInDocument,
+  findTasksLinkedToThread,
   groupGoalsByStatus,
   groupStandaloneTasksByStatus,
+  isThreadLinkedToTask,
   parseProjectGoalsDocument,
   ProjectGoalsDocumentParseError,
   serializeProjectGoalsDocument,
@@ -18,7 +22,7 @@ describe("projectGoals", () => {
     expect(parseProjectGoalsDocument(null)).toEqual(createEmptyProjectGoalsDocument());
   });
 
-  it("migrates v1 documents to v2 with stable ids", () => {
+  it("migrates v1 documents to v3 with stable ids", () => {
     const document = parseProjectGoalsDocument(
       JSON.stringify({
         version: 1,
@@ -27,8 +31,46 @@ describe("projectGoals", () => {
       }),
     );
 
-    expect(document.version).toBe(2);
+    expect(document.version).toBe(3);
     expect(document.goals[0]?.id).toEqual(expect.any(String));
+    expect(document.tasks).toEqual([]);
+  });
+
+  it("migrates v2 documents to v3 with empty linked thread ids", () => {
+    const document = parseProjectGoalsDocument(
+      JSON.stringify({
+        version: 2,
+        goals: [
+          {
+            id: "goal_1",
+            name: "Launch",
+            status: "planning",
+            tasks: [
+              {
+                id: "task_goal_1",
+                title: "Ship docs",
+                description: "",
+                status: "working",
+                subtasks: [],
+              },
+            ],
+          },
+        ],
+        tasks: [
+          {
+            id: "task_1",
+            title: "Cleanup",
+            description: "",
+            status: "planning",
+            subtasks: [],
+          },
+        ],
+      }),
+    );
+
+    expect(document.version).toBe(3);
+    expect(document.goals[0]?.tasks[0]?.linkedThreadIds).toEqual([]);
+    expect(document.tasks[0]?.linkedThreadIds).toEqual([]);
   });
 
   it("rejects invalid schema shapes", () => {
@@ -59,14 +101,14 @@ describe("projectGoals", () => {
 
     expect(
       serializeProjectGoalsDocument({
-        version: 2,
+        version: 3,
         goals: [betaGoal, alphaGoal],
         tasks: [
           createTask({ id: "task_zebra", title: "zebra", description: "", status: "archived" }),
           createTask({ id: "task_apple", title: "apple", description: "", status: "working" }),
         ],
       }),
-    ).toContain('"version": 2');
+    ).toContain('"version": 3');
   });
 
   it("groups goals by status in the fixed order", () => {
@@ -126,11 +168,32 @@ describe("projectGoals", () => {
     expect(document.tasks[0]?.subtasks.map((subtask) => subtask.task)).toEqual(["third", "first"]);
   });
 
+  it("normalizes linked thread ids by trimming, deduping, and sorting", () => {
+    const document = parseProjectGoalsDocument(
+      JSON.stringify({
+        version: 3,
+        goals: [],
+        tasks: [
+          {
+            id: "task_1",
+            title: "Task",
+            description: "",
+            status: "planning",
+            subtasks: [],
+            linkedThreadIds: ["  thread-b  ", "thread-a", "thread-b"],
+          },
+        ],
+      }),
+    );
+
+    expect(document.tasks[0]?.linkedThreadIds).toEqual(["thread-a", "thread-b"]);
+  });
+
   it("updates a goal by id", () => {
     const goal = createGoal({ id: "goal_1", name: "Goal", status: "planning" });
     const updated = updateGoal(
       {
-        version: 2,
+        version: 3,
         goals: [goal],
         tasks: [],
       },
@@ -145,7 +208,7 @@ describe("projectGoals", () => {
     const task = createTask({ id: "task_1", title: "B", description: "", status: "planning" });
     const updated = updateTask(
       {
-        version: 2,
+        version: 3,
         goals: [],
         tasks: [task],
       },
@@ -159,5 +222,84 @@ describe("projectGoals", () => {
 
     expect(updated?.tasks[0]?.title).toBe("Z");
     expect(updated?.tasks[0]?.description).toBe("updated");
+  });
+
+  it("attaches and detaches thread ids idempotently", () => {
+    const document = {
+      version: 3 as const,
+      goals: [],
+      tasks: [createTask({ id: "task_1", title: "Task", description: "", status: "planning" })],
+    };
+
+    const attached = attachThreadToTaskInDocument(document, "task_1", " thread-2 ");
+    expect(attached).not.toBeNull();
+    if (!attached) {
+      throw new Error("Expected attach to succeed");
+    }
+    const attachedAgain = attachThreadToTaskInDocument(attached, "task_1", "thread-2");
+    expect(attachedAgain).not.toBeNull();
+    if (!attachedAgain) {
+      throw new Error("Expected second attach to succeed");
+    }
+    const withSecondThread = attachThreadToTaskInDocument(attachedAgain, "task_1", "thread-1");
+    expect(withSecondThread).not.toBeNull();
+    if (!withSecondThread) {
+      throw new Error("Expected second thread attach to succeed");
+    }
+    const detached = detachThreadFromTaskInDocument(withSecondThread, "task_1", "thread-2");
+    expect(detached).not.toBeNull();
+    if (!detached) {
+      throw new Error("Expected detach to succeed");
+    }
+    const detachedAgain = detachThreadFromTaskInDocument(detached, "task_1", "thread-2");
+    expect(detachedAgain).not.toBeNull();
+    if (!detachedAgain) {
+      throw new Error("Expected second detach to succeed");
+    }
+
+    expect(attached.tasks[0]?.linkedThreadIds).toEqual(["thread-2"]);
+    expect(attachedAgain.tasks[0]?.linkedThreadIds).toEqual(["thread-2"]);
+    expect(withSecondThread.tasks[0]?.linkedThreadIds).toEqual(["thread-1", "thread-2"]);
+    expect(detached.tasks[0]?.linkedThreadIds).toEqual(["thread-1"]);
+    expect(detachedAgain.tasks[0]?.linkedThreadIds).toEqual(["thread-1"]);
+    expect(isThreadLinkedToTask(detachedAgain.tasks[0]!, "thread-1")).toBe(true);
+    expect(isThreadLinkedToTask(detachedAgain.tasks[0]!, "thread-2")).toBe(false);
+  });
+
+  it("finds linked tasks for standalone and goal-scoped tasks", () => {
+    const document = {
+      version: 3 as const,
+      goals: [
+        createGoal({
+          id: "goal_1",
+          name: "Goal",
+          status: "working",
+          tasks: [
+            createTask({
+              id: "goal_task_1",
+              title: "Goal task",
+              description: "",
+              status: "working",
+              linkedThreadIds: ["thread-1"],
+            }),
+          ],
+        }),
+      ],
+      tasks: [
+        createTask({
+          id: "task_1",
+          title: "Standalone task",
+          description: "",
+          status: "planning",
+          linkedThreadIds: ["thread-1"],
+        }),
+      ],
+    };
+
+    const linkedTasks = findTasksLinkedToThread(document, "thread-1");
+
+    expect(linkedTasks).toHaveLength(2);
+    expect(linkedTasks.map((entry) => entry.scope)).toEqual(["standalone", "goal"]);
+    expect(linkedTasks.map((entry) => entry.task.id)).toEqual(["task_1", "goal_task_1"]);
   });
 });

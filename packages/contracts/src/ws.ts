@@ -31,9 +31,11 @@ import {
 import { KeybindingRule } from "./keybindings";
 import { ProjectReadFileInput, ProjectSearchEntriesInput, ProjectWriteFileInput } from "./project";
 import {
+  ProjectPlanningAttachThreadToTaskInput,
   ProjectPlanningCreateGoalInput,
   ProjectPlanningCreateSubtaskInput,
   ProjectPlanningCreateTaskInput,
+  ProjectPlanningDetachThreadFromTaskInput,
   ProjectPlanningDeleteGoalInput,
   ProjectPlanningDeleteSubtaskInput,
   ProjectPlanningDeleteTaskInput,
@@ -62,6 +64,8 @@ export const WS_METHODS = {
   projectPlanningCreateTask: "projectPlanning.createTask",
   projectPlanningUpdateTask: "projectPlanning.updateTask",
   projectPlanningDeleteTask: "projectPlanning.deleteTask",
+  projectPlanningAttachThreadToTask: "projectPlanning.attachThreadToTask",
+  projectPlanningDetachThreadFromTask: "projectPlanning.detachThreadFromTask",
   projectPlanningCreateSubtask: "projectPlanning.createSubtask",
   projectPlanningUpdateSubtask: "projectPlanning.updateSubtask",
   projectPlanningDeleteSubtask: "projectPlanning.deleteSubtask",
@@ -136,6 +140,11 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.projectPlanningCreateTask, ProjectPlanningCreateTaskInput),
   tagRequestBody(WS_METHODS.projectPlanningUpdateTask, ProjectPlanningUpdateTaskInput),
   tagRequestBody(WS_METHODS.projectPlanningDeleteTask, ProjectPlanningDeleteTaskInput),
+  tagRequestBody(WS_METHODS.projectPlanningAttachThreadToTask, ProjectPlanningAttachThreadToTaskInput),
+  tagRequestBody(
+    WS_METHODS.projectPlanningDetachThreadFromTask,
+    ProjectPlanningDetachThreadFromTaskInput,
+  ),
   tagRequestBody(WS_METHODS.projectPlanningCreateSubtask, ProjectPlanningCreateSubtaskInput),
   tagRequestBody(WS_METHODS.projectPlanningUpdateSubtask, ProjectPlanningUpdateSubtaskInput),
   tagRequestBody(WS_METHODS.projectPlanningDeleteSubtask, ProjectPlanningDeleteSubtaskInput),

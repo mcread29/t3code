@@ -48,6 +48,7 @@ interface PersistedComposerThreadDraftState {
 interface PersistedDraftThreadState {
   projectId: ProjectId;
   createdAt: string;
+  title?: string | null;
   runtimeMode: RuntimeMode;
   interactionMode: ProviderInteractionMode;
   branch: string | null;
@@ -77,6 +78,7 @@ interface ComposerThreadDraftState {
 export interface DraftThreadState {
   projectId: ProjectId;
   createdAt: string;
+  title?: string | null;
   runtimeMode: RuntimeMode;
   interactionMode: ProviderInteractionMode;
   branch: string | null;
@@ -101,6 +103,7 @@ interface ComposerDraftStoreState {
       branch?: string | null;
       worktreePath?: string | null;
       createdAt?: string;
+      title?: string | null;
       envMode?: DraftThreadEnvMode;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
@@ -113,6 +116,7 @@ interface ComposerDraftStoreState {
       worktreePath?: string | null;
       projectId?: ProjectId;
       createdAt?: string;
+      title?: string | null;
       envMode?: DraftThreadEnvMode;
       runtimeMode?: RuntimeMode;
       interactionMode?: ProviderInteractionMode;
@@ -284,6 +288,7 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
       const candidateDraftThread = rawDraftThread as Record<string, unknown>;
       const projectId = candidateDraftThread.projectId;
       const createdAt = candidateDraftThread.createdAt;
+      const title = candidateDraftThread.title;
       const branch = candidateDraftThread.branch;
       const worktreePath = candidateDraftThread.worktreePath;
       const normalizedWorktreePath = typeof worktreePath === "string" ? worktreePath : null;
@@ -296,6 +301,7 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
           typeof createdAt === "string" && createdAt.length > 0
             ? createdAt
             : new Date().toISOString(),
+        ...(typeof title === "string" && title.length > 0 ? { title } : {}),
         runtimeMode:
           candidateDraftThread.runtimeMode === "approval-required" ||
           candidateDraftThread.runtimeMode === "full-access"
@@ -332,6 +338,7 @@ function normalizePersistedComposerDraftState(value: unknown): PersistedComposer
           draftThreadsByThreadId[threadId as ThreadId] = {
             projectId: projectId as ProjectId,
             createdAt: new Date().toISOString(),
+            title: null,
             runtimeMode: DEFAULT_RUNTIME_MODE,
             interactionMode: DEFAULT_INTERACTION_MODE,
             branch: null,
@@ -563,6 +570,8 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           const nextDraftThread: DraftThreadState = {
             projectId,
             createdAt: options?.createdAt ?? existingThread?.createdAt ?? new Date().toISOString(),
+            title:
+              options?.title === undefined ? (existingThread?.title ?? null) : (options.title ?? null),
             runtimeMode: options?.runtimeMode ?? existingThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
             interactionMode:
               options?.interactionMode ??
@@ -582,6 +591,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
             existingThread &&
             existingThread.projectId === nextDraftThread.projectId &&
             existingThread.createdAt === nextDraftThread.createdAt &&
+            (existingThread.title ?? null) === (nextDraftThread.title ?? null) &&
             existingThread.runtimeMode === nextDraftThread.runtimeMode &&
             existingThread.interactionMode === nextDraftThread.interactionMode &&
             existingThread.branch === nextDraftThread.branch &&
@@ -638,6 +648,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
               options.createdAt === undefined
                 ? existing.createdAt
                 : options.createdAt || existing.createdAt,
+            title: options.title === undefined ? (existing.title ?? null) : (options.title ?? null),
             runtimeMode: options.runtimeMode ?? existing.runtimeMode,
             interactionMode: options.interactionMode ?? existing.interactionMode,
             branch: options.branch === undefined ? existing.branch : (options.branch ?? null),
@@ -649,6 +660,7 @@ export const useComposerDraftStore = create<ComposerDraftStoreState>()(
           const isUnchanged =
             nextDraftThread.projectId === existing.projectId &&
             nextDraftThread.createdAt === existing.createdAt &&
+            (nextDraftThread.title ?? null) === (existing.title ?? null) &&
             nextDraftThread.runtimeMode === existing.runtimeMode &&
             nextDraftThread.interactionMode === existing.interactionMode &&
             nextDraftThread.branch === existing.branch &&

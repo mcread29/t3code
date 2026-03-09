@@ -24,12 +24,17 @@ export {
   addStandaloneTask,
   addSubtaskToTask,
   addTaskToGoal,
+  attachThreadToTaskInDocument,
   updateGoal,
+  detachThreadFromTaskInDocument,
+  findTasksLinkedToThread,
+  isThreadLinkedToTask,
   updateSubtask,
   updateTask,
 } from "@t3tools/shared/projectGoals";
 
 export type {
+  LinkedProjectTaskLocation,
   ProjectGoal,
   ProjectGoalsDocument,
   ProjectGoalsGroup,

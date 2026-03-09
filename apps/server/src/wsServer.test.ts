@@ -1644,6 +1644,123 @@ describe("WebSocket Server", () => {
     expect(fs.existsSync(path.join(workspace, "..", "escape.md"))).toBe(false);
   });
 
+  it("routes task-thread attach and detach mutations over websocket", async () => {
+    const workspace = makeTempDir("t3code-ws-project-planning-threads-");
+    fs.mkdirSync(path.join(workspace, ".t3code"), { recursive: true });
+    fs.writeFileSync(
+      path.join(workspace, ".t3code", "project-goals.json"),
+      JSON.stringify(
+        {
+          version: 3,
+          goals: [
+            {
+              id: "goal_1",
+              name: "Goal",
+              status: "working",
+              tasks: [
+                {
+                  id: "goal_task_1",
+                  title: "Goal task",
+                  description: "",
+                  status: "working",
+                  subtasks: [],
+                  linkedThreadIds: [],
+                },
+              ],
+            },
+          ],
+          tasks: [
+            {
+              id: "task_1",
+              title: "Standalone task",
+              description: "",
+              status: "planning",
+              subtasks: [],
+              linkedThreadIds: [],
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const attachResponse = await sendRequest(ws, WS_METHODS.projectPlanningAttachThreadToTask, {
+      workspaceRoot: workspace,
+      taskId: "goal_task_1",
+      threadId: "thread-1",
+    });
+
+    expect(attachResponse.error).toBeUndefined();
+    expect(attachResponse.result).toEqual(
+      expect.objectContaining({
+        type: "success",
+        changedId: "goal_task_1",
+        snapshot: expect.objectContaining({
+          document: expect.objectContaining({
+            goals: [
+              expect.objectContaining({
+                tasks: [
+                  expect.objectContaining({
+                    id: "goal_task_1",
+                    linkedThreadIds: ["thread-1"],
+                  }),
+                ],
+              }),
+            ],
+          }),
+        }),
+      }),
+    );
+
+    const detachResponse = await sendRequest(ws, WS_METHODS.projectPlanningDetachThreadFromTask, {
+      workspaceRoot: workspace,
+      taskId: "goal_task_1",
+      threadId: "thread-1",
+    });
+
+    expect(detachResponse.error).toBeUndefined();
+    expect(detachResponse.result).toEqual(
+      expect.objectContaining({
+        type: "success",
+        changedId: "goal_task_1",
+        snapshot: expect.objectContaining({
+          document: expect.objectContaining({
+            goals: [
+              expect.objectContaining({
+                tasks: [
+                  expect.objectContaining({
+                    id: "goal_task_1",
+                    linkedThreadIds: [],
+                  }),
+                ],
+              }),
+            ],
+          }),
+        }),
+      }),
+    );
+
+    const persistedDocument = JSON.parse(
+      fs.readFileSync(path.join(workspace, ".t3code", "project-goals.json"), "utf8"),
+    ) as {
+      goals: Array<{ tasks: Array<{ id: string; linkedThreadIds: string[] }> }>;
+      tasks: Array<{ id: string; linkedThreadIds: string[] }>;
+    };
+
+    expect(persistedDocument.goals[0]?.tasks[0]?.linkedThreadIds).toEqual([]);
+    expect(persistedDocument.tasks[0]?.linkedThreadIds).toEqual([]);
+  });
+
   it("routes git core methods over websocket", async () => {
     const listBranches = vi.fn(() =>
       Effect.succeed({

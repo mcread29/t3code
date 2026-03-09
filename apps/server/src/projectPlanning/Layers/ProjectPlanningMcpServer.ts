@@ -233,6 +233,50 @@ export const ProjectPlanningMcpServerLive = Layer.effect(
             );
 
             server.registerTool(
+              "project_planning_attach_thread_to_task",
+              {
+                description: toolDescription("task-thread links"),
+                inputSchema: {
+                  projectId: z.string().optional(),
+                  workspaceRoot: z.string().optional(),
+                  expectedRevision: z.string().optional(),
+                  taskId: z.string(),
+                  threadId: z.string(),
+                },
+              },
+              async (input) => {
+                const result = await Effect.runPromise(projectPlanning.attachThreadToTask(input));
+                return {
+                  content: [{ type: "text", text: formatToolText(result) }],
+                  structuredContent: result,
+                  isError: result.type === "error",
+                };
+              },
+            );
+
+            server.registerTool(
+              "project_planning_detach_thread_from_task",
+              {
+                description: toolDescription("task-thread links"),
+                inputSchema: {
+                  projectId: z.string().optional(),
+                  workspaceRoot: z.string().optional(),
+                  expectedRevision: z.string().optional(),
+                  taskId: z.string(),
+                  threadId: z.string(),
+                },
+              },
+              async (input) => {
+                const result = await Effect.runPromise(projectPlanning.detachThreadFromTask(input));
+                return {
+                  content: [{ type: "text", text: formatToolText(result) }],
+                  structuredContent: result,
+                  isError: result.type === "error",
+                };
+              },
+            );
+
+            server.registerTool(
               "project_planning_create_subtask",
               {
                 description: toolDescription("subtasks"),

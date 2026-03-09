@@ -61,6 +61,7 @@ export const ProjectTaskSchema = Schema.Struct({
   description: Schema.String,
   status: ProjectGoalStatusSchema,
   subtasks: Schema.Array(ProjectSubtaskSchema),
+  linkedThreadIds: Schema.Array(ProjectIdSchema),
 });
 export type ProjectTask = typeof ProjectTaskSchema.Type;
 
@@ -73,16 +74,36 @@ export const ProjectGoalSchema = Schema.Struct({
 export type ProjectGoal = typeof ProjectGoalSchema.Type;
 
 export const ProjectGoalsDocumentSchema = Schema.Struct({
-  version: Schema.Literal(2),
+  version: Schema.Literal(3),
   goals: Schema.Array(ProjectGoalSchema),
   tasks: Schema.Array(ProjectTaskSchema),
 });
 export type ProjectGoalsDocument = typeof ProjectGoalsDocumentSchema.Type;
 
 type ProjectGoalsDocumentV1 = typeof ProjectGoalsDocumentSchemaV1.Type;
+const ProjectTaskSchemaV2 = Schema.Struct({
+  id: ProjectIdSchema,
+  title: Schema.String,
+  description: Schema.String,
+  status: ProjectGoalStatusSchema,
+  subtasks: Schema.Array(ProjectSubtaskSchema),
+});
+const ProjectGoalSchemaV2 = Schema.Struct({
+  id: ProjectIdSchema,
+  name: Schema.String,
+  status: ProjectGoalStatusSchema,
+  tasks: Schema.Array(ProjectTaskSchemaV2),
+});
+const ProjectGoalsDocumentSchemaV2 = Schema.Struct({
+  version: Schema.Literal(2),
+  goals: Schema.Array(ProjectGoalSchemaV2),
+  tasks: Schema.Array(ProjectTaskSchemaV2),
+});
+type ProjectGoalsDocumentV2 = typeof ProjectGoalsDocumentSchemaV2.Type;
 
 const ProjectGoalsDocumentSchemaAnyVersion = Schema.Union([
   ProjectGoalsDocumentSchemaV1,
+  ProjectGoalsDocumentSchemaV2,
   ProjectGoalsDocumentSchema,
 ]);
 
@@ -112,6 +133,10 @@ export type ProjectSubtaskLocation =
   | { scope: "standalone"; task: ProjectTask; subtask: ProjectSubtask }
   | { scope: "goal"; goal: ProjectGoal; task: ProjectTask; subtask: ProjectSubtask };
 
+export type LinkedProjectTaskLocation =
+  | { scope: "standalone"; task: ProjectTask }
+  | { scope: "goal"; goal: ProjectGoal; task: ProjectTask };
+
 const decodeProjectGoalsDocument = Schema.decodeUnknownSync(ProjectGoalsDocumentSchemaAnyVersion);
 
 function createProjectPlanningId(prefix: "goal" | "task" | "subtask"): string {
@@ -120,7 +145,7 @@ function createProjectPlanningId(prefix: "goal" | "task" | "subtask"): string {
 
 export function createEmptyProjectGoalsDocument(): ProjectGoalsDocument {
   return {
-    version: 2,
+    version: 3,
     goals: [],
     tasks: [],
   };
@@ -159,6 +184,7 @@ function migrateTask(task: typeof ProjectTaskSchemaV1.Type): ProjectTask {
     description: task.description,
     status: task.status,
     subtasks: task.subtasks.map(migrateSubtask),
+    linkedThreadIds: [],
   };
 }
 
@@ -173,9 +199,37 @@ function migrateGoal(goal: typeof ProjectGoalSchemaV1.Type): ProjectGoal {
 
 function migrateProjectGoalsDocumentV1(doc: ProjectGoalsDocumentV1): ProjectGoalsDocument {
   return {
-    version: 2,
+    version: 3,
     goals: doc.goals.map(migrateGoal),
     tasks: doc.tasks.map(migrateTask),
+  };
+}
+
+function migrateTaskV2(task: ProjectGoalsDocumentV2["tasks"][number]): ProjectTask {
+  return {
+    id: task.id,
+    title: task.title,
+    description: task.description,
+    status: task.status,
+    subtasks: task.subtasks.map(normalizeSubtask),
+    linkedThreadIds: [],
+  };
+}
+
+function migrateGoalV2(goal: ProjectGoalsDocumentV2["goals"][number]): ProjectGoal {
+  return {
+    id: goal.id,
+    name: goal.name,
+    status: goal.status,
+    tasks: goal.tasks.map(migrateTaskV2),
+  };
+}
+
+function migrateProjectGoalsDocumentV2(doc: ProjectGoalsDocumentV2): ProjectGoalsDocument {
+  return {
+    version: 3,
+    goals: doc.goals.map(migrateGoalV2),
+    tasks: doc.tasks.map(migrateTaskV2),
   };
 }
 
@@ -188,12 +242,20 @@ function normalizeSubtask(subtask: ProjectSubtask): ProjectSubtask {
 }
 
 function normalizeTask(task: ProjectTask): ProjectTask {
+  const linkedThreadIds = Array.from(
+    new Set(
+      task.linkedThreadIds
+        .map((threadId) => threadId.trim())
+        .filter((threadId) => threadId.length > 0),
+    ),
+  ).toSorted((left, right) => left.localeCompare(right));
   return {
     id: task.id,
     title: task.title,
     description: task.description,
     status: task.status,
     subtasks: task.subtasks.map(normalizeSubtask),
+    linkedThreadIds,
   };
 }
 
@@ -209,7 +271,7 @@ function normalizeGoal(goal: ProjectGoal): ProjectGoal {
 export function normalizeProjectGoalsDocument(doc: ProjectGoalsDocument): ProjectGoalsDocument {
   const decoded = Schema.decodeUnknownSync(ProjectGoalsDocumentSchema)(doc);
   return {
-    version: 2,
+    version: 3,
     goals: [...decoded.goals].map(normalizeGoal).toSorted(compareByStatusAndName),
     tasks: [...decoded.tasks].map(normalizeTask).toSorted(compareByStatusAndTitle),
   };
@@ -233,7 +295,12 @@ export function parseProjectGoalsDocument(raw: string | null): ProjectGoalsDocum
 
   try {
     const decoded = decodeProjectGoalsDocument(parsed);
-    const migrated = decoded.version === 1 ? migrateProjectGoalsDocumentV1(decoded) : decoded;
+    const migrated =
+      decoded.version === 1
+        ? migrateProjectGoalsDocumentV1(decoded)
+        : decoded.version === 2
+          ? migrateProjectGoalsDocumentV2(decoded)
+          : decoded;
     return normalizeProjectGoalsDocument(migrated);
   } catch (error) {
     throw new ProjectGoalsDocumentParseError(
@@ -321,6 +388,7 @@ export function createTask(input?: Partial<ProjectTask>): ProjectTask {
     description: input?.description ?? "",
     status: input?.status ?? "planning",
     subtasks: input?.subtasks ?? [],
+    linkedThreadIds: input?.linkedThreadIds ?? [],
   });
 }
 
@@ -524,6 +592,74 @@ export function deleteTask(doc: ProjectGoalsDocument, taskId: string): ProjectGo
     ...doc,
     goals,
   });
+}
+
+export function attachThreadToTaskInDocument(
+  doc: ProjectGoalsDocument,
+  taskId: string,
+  threadId: string,
+): ProjectGoalsDocument | null {
+  const normalizedThreadId = threadId.trim();
+  if (normalizedThreadId.length === 0) {
+    return null;
+  }
+
+  return updateTask(doc, taskId, (task) => ({
+    ...task,
+    linkedThreadIds: [...task.linkedThreadIds, normalizedThreadId],
+  }));
+}
+
+export function detachThreadFromTaskInDocument(
+  doc: ProjectGoalsDocument,
+  taskId: string,
+  threadId: string,
+): ProjectGoalsDocument | null {
+  const normalizedThreadId = threadId.trim();
+  if (normalizedThreadId.length === 0) {
+    return null;
+  }
+
+  return updateTask(doc, taskId, (task) => ({
+    ...task,
+    linkedThreadIds: task.linkedThreadIds.filter((entry) => entry !== normalizedThreadId),
+  }));
+}
+
+export function isThreadLinkedToTask(task: ProjectTask, threadId: string): boolean {
+  const normalizedThreadId = threadId.trim();
+  if (normalizedThreadId.length === 0) {
+    return false;
+  }
+
+  return task.linkedThreadIds.includes(normalizedThreadId);
+}
+
+export function findTasksLinkedToThread(
+  doc: ProjectGoalsDocument,
+  threadId: string,
+): LinkedProjectTaskLocation[] {
+  const normalizedThreadId = threadId.trim();
+  if (normalizedThreadId.length === 0) {
+    return [];
+  }
+
+  const linkedTasks: LinkedProjectTaskLocation[] = [];
+  for (const task of doc.tasks) {
+    if (task.linkedThreadIds.includes(normalizedThreadId)) {
+      linkedTasks.push({ scope: "standalone", task });
+    }
+  }
+
+  for (const goal of doc.goals) {
+    for (const task of goal.tasks) {
+      if (task.linkedThreadIds.includes(normalizedThreadId)) {
+        linkedTasks.push({ scope: "goal", goal, task });
+      }
+    }
+  }
+
+  return linkedTasks;
 }
 
 export function addSubtaskToTask(

@@ -25,6 +25,7 @@ export const ProjectPlanningTask = Schema.Struct({
   description: Schema.String,
   status: ProjectGoalStatus,
   subtasks: Schema.Array(ProjectPlanningSubtask),
+  linkedThreadIds: Schema.Array(TrimmedNonEmptyString),
 });
 export type ProjectPlanningTask = typeof ProjectPlanningTask.Type;
 
@@ -37,7 +38,7 @@ export const ProjectPlanningGoal = Schema.Struct({
 export type ProjectPlanningGoal = typeof ProjectPlanningGoal.Type;
 
 export const ProjectPlanningDocument = Schema.Struct({
-  version: Schema.Literal(2),
+  version: Schema.Literal(3),
   goals: Schema.Array(ProjectPlanningGoal),
   tasks: Schema.Array(ProjectPlanningTask),
 });
@@ -160,6 +161,24 @@ export const ProjectPlanningDeleteTaskInput = Schema.Struct({
   taskId: ProjectPlanningEntityId,
 });
 export type ProjectPlanningDeleteTaskInput = typeof ProjectPlanningDeleteTaskInput.Type;
+
+export const ProjectPlanningAttachThreadToTaskInput = Schema.Struct({
+  ...ProjectPlanningTarget.fields,
+  ...ProjectPlanningExpectedRevision.fields,
+  taskId: ProjectPlanningEntityId,
+  threadId: TrimmedNonEmptyString,
+});
+export type ProjectPlanningAttachThreadToTaskInput =
+  typeof ProjectPlanningAttachThreadToTaskInput.Type;
+
+export const ProjectPlanningDetachThreadFromTaskInput = Schema.Struct({
+  ...ProjectPlanningTarget.fields,
+  ...ProjectPlanningExpectedRevision.fields,
+  taskId: ProjectPlanningEntityId,
+  threadId: TrimmedNonEmptyString,
+});
+export type ProjectPlanningDetachThreadFromTaskInput =
+  typeof ProjectPlanningDetachThreadFromTaskInput.Type;
 
 export const ProjectPlanningCreateSubtaskInput = Schema.Struct({
   ...ProjectPlanningTarget.fields,

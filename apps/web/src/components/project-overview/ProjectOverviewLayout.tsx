@@ -1,5 +1,6 @@
 import type { ProjectId } from "@t3tools/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSearch } from "@tanstack/react-router";
 import { PanelLeftIcon, PlusIcon } from "lucide-react";
 import React from "react";
 
@@ -36,6 +37,9 @@ export default function ProjectOverviewLayout({ projectId }: { projectId: Projec
   const [activeSection, setActiveSection] = React.useState<ProjectOverviewSection>({
     kind: "standalone-tasks",
   });
+  const search = useSearch({
+    from: "/_chat/project/$projectId",
+  });
 
   const goals = projectGoalsQuery.data?.document.goals;
   const queryClient = useQueryClient();
@@ -48,6 +52,21 @@ export default function ProjectOverviewLayout({ projectId }: { projectId: Projec
     setActiveSection({ kind: "goal", goalId });
     setMobileSidebarOpen(false);
   }, []);
+
+  React.useEffect(() => {
+    if (search.goalId) {
+      setActiveSection({ kind: "goal", goalId: search.goalId });
+      return;
+    }
+    if (search.taskId) {
+      const goalForTask = goals?.find((goal) => goal.tasks.some((task) => task.id === search.taskId));
+      if (goalForTask) {
+        setActiveSection({ kind: "goal", goalId: goalForTask.id });
+        return;
+      }
+      setActiveSection({ kind: "standalone-tasks" });
+    }
+  }, [goals, search.goalId, search.taskId]);
 
   React.useEffect(() => {
     if (activeSection.kind !== "goal") {
@@ -88,6 +107,7 @@ export default function ProjectOverviewLayout({ projectId }: { projectId: Projec
         <ProjectOverviewContent
           activeSection={activeSection}
           goalEditorOpen={goalEditorOpen}
+          {...(search.taskId ? { highlightedTaskId: search.taskId } : {})}
           onGoalEditorOpenChange={setGoalEditorOpen}
           onTaskEditorOpenChange={setTaskEditorOpen}
           projectId={projectId}

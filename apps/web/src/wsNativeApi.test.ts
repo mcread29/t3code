@@ -349,6 +349,45 @@ describe("wsNativeApi", () => {
     });
   });
 
+  it("forwards task-thread link mutations to project planning websocket methods", async () => {
+    requestMock.mockResolvedValue({
+      type: "success",
+      changedId: "task-1",
+      snapshot: {
+        revision: "rev-1",
+        document: {
+          version: 3,
+          goals: [],
+          tasks: [],
+        },
+      },
+    });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    const input = {
+      projectId: ProjectId.makeUnsafe("project-1"),
+      workspaceRoot: "/tmp/project",
+      expectedRevision: "rev-1",
+      taskId: "task-1",
+      threadId: "thread-1",
+    } as const;
+
+    await api.projectPlanning.attachThreadToTask(input);
+    await api.projectPlanning.detachThreadFromTask(input);
+
+    expect(requestMock).toHaveBeenNthCalledWith(
+      1,
+      WS_METHODS.projectPlanningAttachThreadToTask,
+      input,
+    );
+    expect(requestMock).toHaveBeenNthCalledWith(
+      2,
+      WS_METHODS.projectPlanningDetachThreadFromTask,
+      input,
+    );
+  });
+
   it("forwards full-thread diff requests to the orchestration websocket method", async () => {
     requestMock.mockResolvedValue({ diff: "patch" });
     const { createWsNativeApi } = await import("./wsNativeApi");

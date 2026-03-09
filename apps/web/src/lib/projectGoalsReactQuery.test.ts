@@ -24,7 +24,7 @@ describe("projectGoalsReactQuery", () => {
           snapshot: {
             revision: "rev-1",
             document: {
-              version: 2,
+              version: 3,
               goals: [],
               tasks: [],
             },
@@ -42,7 +42,7 @@ describe("projectGoalsReactQuery", () => {
     );
 
     expect(result.document).toEqual({
-      version: 2,
+      version: 3,
       goals: [],
       tasks: [],
     });

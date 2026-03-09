@@ -1,7 +1,9 @@
 import type {
+  ProjectPlanningAttachThreadToTaskInput,
   ProjectPlanningCreateGoalInput,
   ProjectPlanningCreateSubtaskInput,
   ProjectPlanningCreateTaskInput,
+  ProjectPlanningDetachThreadFromTaskInput,
   ProjectPlanningDeleteGoalInput,
   ProjectPlanningDeleteSubtaskInput,
   ProjectPlanningDeleteTaskInput,
@@ -38,6 +40,12 @@ export interface ProjectPlanningShape {
   ) => Effect.Effect<ProjectPlanningMutationResult>;
   readonly deleteTask: (
     input: ProjectPlanningDeleteTaskInput,
+  ) => Effect.Effect<ProjectPlanningMutationResult>;
+  readonly attachThreadToTask: (
+    input: ProjectPlanningAttachThreadToTaskInput,
+  ) => Effect.Effect<ProjectPlanningMutationResult>;
+  readonly detachThreadFromTask: (
+    input: ProjectPlanningDetachThreadFromTaskInput,
   ) => Effect.Effect<ProjectPlanningMutationResult>;
   readonly createSubtask: (
     input: ProjectPlanningCreateSubtaskInput,

@@ -1,5 +1,6 @@
 import type { ProjectId } from "@t3tools/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@tanstack/react-router";
 import {
   ArchiveIcon,
   ArchiveRestoreIcon,
@@ -12,6 +13,7 @@ import {
 } from "lucide-react";
 import React from "react";
 
+import { useComposerDraftStore } from "~/composerDraftStore";
 import { ensureNativeApi } from "~/nativeApi";
 import {
   createEmptyProjectGoalsDocument,
@@ -24,6 +26,7 @@ import {
   type ProjectTask,
 } from "~/projectGoals";
 import { useStore } from "~/store";
+import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE } from "~/types";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
@@ -55,8 +58,17 @@ import {
   ProjectPlanningRpcError,
   unwrapMutationResult,
 } from "~/lib/projectGoalsReactQuery";
+import {
+  buildTaskKickoffPrompt,
+  buildTaskThreadTitle,
+  getTaskThreadCandidates,
+  presentLinkedThreads,
+  type LinkedThreadPresentation,
+  type TaskThreadCandidate,
+} from "~/lib/taskThreadLinks";
 import TaskKanbanBoard from "./TaskKanbanBoard";
 import type { ProjectOverviewSection } from "./ProjectOverviewLayout";
+import { newThreadId } from "~/lib/utils";
 
 type GoalEditorState =
   | { mode: "create" }
@@ -85,6 +97,14 @@ type TaskEditorState =
       goalId: string;
       taskId: string;
       task: ProjectTask;
+    };
+
+type TaskThreadDialogTask =
+  | {
+      taskId: string;
+      task: ProjectTask;
+      goalId?: string;
+      goalName?: string;
     };
 
 function standaloneTaskRowKey(taskId: string): string {
@@ -333,25 +353,134 @@ function TaskEditorDialog({
   );
 }
 
+function AttachThreadDialog({
+  candidates,
+  open,
+  onAttach,
+  onClose,
+  taskTitle,
+}: {
+  candidates: TaskThreadCandidate[];
+  open: boolean;
+  onAttach: (threadId: string) => Promise<void>;
+  onClose: () => void;
+  taskTitle: string;
+}) {
+  const [query, setQuery] = React.useState("");
+  const [pendingThreadId, setPendingThreadId] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    if (!open) {
+      setQuery("");
+      setPendingThreadId(null);
+    }
+  }, [open]);
+
+  const filteredCandidates = React.useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    if (normalizedQuery.length === 0) {
+      return candidates;
+    }
+    return candidates.filter((candidate) =>
+      `${candidate.title} ${candidate.threadId}`.toLowerCase().includes(normalizedQuery),
+    );
+  }, [candidates, query]);
+
+  return (
+    <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
+      <DialogPopup>
+        <DialogHeader>
+          <DialogTitle>Attach Existing Thread</DialogTitle>
+          <DialogDescription>
+            Link an existing thread to {taskTitle || "this task"}.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogPanel className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="attach-thread-search">Search</Label>
+            <Input
+              id="attach-thread-search"
+              value={query}
+              onChange={(event) => setQuery(event.currentTarget.value)}
+              placeholder="Filter threads"
+              autoFocus
+            />
+          </div>
+          <div className="max-h-80 space-y-2 overflow-y-auto">
+            {filteredCandidates.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">
+                No available threads to attach.
+              </div>
+            ) : (
+              filteredCandidates.map((candidate) => (
+                <button
+                  key={candidate.id}
+                  type="button"
+                  className="flex w-full items-center justify-between gap-3 rounded-lg border border-border px-3 py-3 text-left hover:bg-accent"
+                  onClick={async () => {
+                    setPendingThreadId(candidate.threadId);
+                    try {
+                      await onAttach(candidate.threadId);
+                      onClose();
+                    } finally {
+                      setPendingThreadId(null);
+                    }
+                  }}
+                  disabled={pendingThreadId !== null}
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-foreground">{candidate.title}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {candidate.statusLabel} • {candidate.threadId}
+                    </p>
+                  </div>
+                  <Badge variant="outline">
+                    {pendingThreadId === candidate.threadId ? "Linking..." : candidate.kind}
+                  </Badge>
+                </button>
+              ))
+            )}
+          </div>
+        </DialogPanel>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} type="button">
+            Close
+          </Button>
+        </DialogFooter>
+      </DialogPopup>
+    </Dialog>
+  );
+}
+
 function TaskCard({
   task,
+  linkedThreads,
   open,
   onOpenChange,
+  onAttachExistingThread,
   onEdit,
   onDelete,
+  onOpenLinkedThread,
   onStatusChange,
+  onStartNewThread,
   onCreateSubtask,
+  onUnlinkThread,
   onUpdateSubtask,
   onDeleteSubtask,
   addSubtaskLabel = "Add Subtask",
 }: {
   task: ProjectTask;
+  linkedThreads: LinkedThreadPresentation[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  onAttachExistingThread: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  onOpenLinkedThread: (threadId: string) => void;
   onStatusChange: (status: ProjectGoalStatus) => Promise<void>;
+  onStartNewThread: () => Promise<void>;
   onCreateSubtask: (task: string) => Promise<void>;
+  onUnlinkThread: (threadId: string) => Promise<void>;
   onUpdateSubtask: (
     subtaskId: string,
     patch: { task?: string; done?: boolean },
@@ -400,6 +529,7 @@ function TaskCard({
               <div className="flex flex-wrap items-center gap-2">
                 <p className="truncate text-sm font-medium text-foreground">{task.title || "Untitled task"}</p>
                 <StatusBadge status={task.status} />
+                <Badge variant="outline">{linkedThreads.length} linked</Badge>
               </div>
               <p className="mt-1 text-xs text-muted-foreground">Subtasks {taskProgressLabel(task)}</p>
             </div>
@@ -416,6 +546,12 @@ function TaskCard({
             <Button size="xs" variant="outline" onClick={() => onOpenChange(true)}>
               {addSubtaskLabel}
             </Button>
+            <Button size="xs" variant="outline" onClick={onAttachExistingThread}>
+              Link Thread
+            </Button>
+            <Button size="xs" variant="outline" onClick={() => void onStartNewThread()}>
+              Start Thread
+            </Button>
             <Button size="xs" variant="outline" onClick={onEdit}>
               <PencilIcon />
               Edit
@@ -430,6 +566,55 @@ function TaskCard({
           <div className="border-t border-border/80 px-4 py-4">
             <div className="space-y-4">
               <div>
+                <div className="mb-4 space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs font-medium tracking-[0.14em] text-muted-foreground uppercase">
+                      Linked Threads
+                    </p>
+                    <Badge variant="outline">{linkedThreads.length}</Badge>
+                  </div>
+                  {linkedThreads.length === 0 ? (
+                    <div className="rounded-lg border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">
+                      No linked threads yet.
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {linkedThreads.map((thread) => (
+                        <div
+                          key={thread.id}
+                          className="flex items-center justify-between gap-3 rounded-lg border border-border/80 px-3 py-2"
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate text-sm text-foreground">{thread.title}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {thread.statusLabel}
+                              {thread.kind === "missing" ? ` • ${thread.threadId}` : ""}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            {thread.kind !== "missing" ? (
+                              <Button
+                                size="xs"
+                                variant="outline"
+                                onClick={() => onOpenLinkedThread(thread.threadId)}
+                              >
+                                Open
+                              </Button>
+                            ) : null}
+                            <Button
+                              size="xs"
+                              variant="ghost"
+                              onClick={() => void onUnlinkThread(thread.threadId)}
+                            >
+                              Unlink
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
                 <p className="text-xs font-medium tracking-[0.14em] text-muted-foreground uppercase">
                   Description
                 </p>
@@ -565,6 +750,7 @@ function TaskCard({
 export default function ProjectOverviewContent({
   activeSection,
   goalEditorOpen,
+  highlightedTaskId,
   onGoalEditorOpenChange,
   onTaskEditorOpenChange,
   projectId,
@@ -572,18 +758,25 @@ export default function ProjectOverviewContent({
 }: {
   activeSection: ProjectOverviewSection;
   goalEditorOpen: boolean;
+  highlightedTaskId?: string;
   onGoalEditorOpenChange: (open: boolean) => void;
   onTaskEditorOpenChange: (open: boolean) => void;
   projectId: ProjectId;
   taskEditorOpen: boolean;
 }) {
   const project = useStore((store) => store.projects.find((entry) => entry.id === projectId) ?? null);
+  const threads = useStore((store) => store.threads);
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const api = ensureNativeApi();
+  const getDraftThreadByProjectId = useComposerDraftStore((store) => store.getDraftThreadByProjectId);
+  const setProjectDraftThreadId = useComposerDraftStore((store) => store.setProjectDraftThreadId);
+  const setPrompt = useComposerDraftStore((store) => store.setPrompt);
 
   const [openTaskRows, setOpenTaskRows] = React.useState<Record<string, boolean>>({});
   const [goalEditorState, setGoalEditorState] = React.useState<GoalEditorState | null>(null);
   const [taskEditorState, setTaskEditorState] = React.useState<TaskEditorState | null>(null);
+  const [attachThreadDialogTask, setAttachThreadDialogTask] = React.useState<TaskThreadDialogTask | null>(null);
   const [showArchivedStandaloneTasks, setShowArchivedStandaloneTasks] = React.useState(false);
   const [showArchivedGoalTasks, setShowArchivedGoalTasks] = React.useState(false);
 
@@ -659,10 +852,22 @@ export default function ProjectOverviewContent({
     selectedGoalId === null ? null : document?.goals.find((goal) => goal.id === selectedGoalId) ?? null;
   const selectedGoalHasArchivedTasks =
     selectedGoal?.tasks.some((task) => task.status === "archived") ?? false;
+  const projectDraftThread = getDraftThreadByProjectId(projectId);
 
   const openTaskRow = React.useCallback((rowKey: string) => {
     setOpenTaskRows((current) => ({ ...current, [rowKey]: true }));
   }, []);
+
+  React.useEffect(() => {
+    if (!highlightedTaskId) {
+      return;
+    }
+    if (activeSection.kind === "standalone-tasks") {
+      openTaskRow(standaloneTaskRowKey(highlightedTaskId));
+      return;
+    }
+    openTaskRow(goalTaskRowKey(activeSection.goalId, highlightedTaskId));
+  }, [activeSection, highlightedTaskId, openTaskRow]);
 
   React.useEffect(() => {
     if (!standaloneHasArchivedTasks) {
@@ -675,87 +880,6 @@ export default function ProjectOverviewContent({
       setShowArchivedGoalTasks(false);
     }
   }, [selectedGoalHasArchivedTasks]);
-
-  if (!project) {
-    return null;
-  }
-
-  if (projectGoalsQuery.isLoading) {
-    return (
-      <div className="flex h-full min-h-0 flex-1 items-center justify-center px-6 py-10">
-        <div className="w-full max-w-5xl rounded-2xl border border-border bg-card/80 p-6 text-sm text-muted-foreground shadow-sm">
-          Loading project goals...
-        </div>
-      </div>
-    );
-  }
-
-  if (projectGoalsQuery.isError) {
-    const invalidDocument = projectGoalsQuery.error instanceof ProjectGoalsDocumentParseError;
-    return (
-      <div className="flex h-full min-h-0 flex-1 items-center justify-center px-6 py-10">
-        <div className="w-full max-w-3xl">
-          <Alert variant="error">
-            <TargetIcon className="mt-0.5" />
-            <AlertTitle>
-              {invalidDocument ? "Project goals file is invalid" : "Project goals could not be loaded"}
-            </AlertTitle>
-            <AlertDescription>
-              <p>
-                {invalidDocument
-                  ? "The file exists, but its contents do not match the expected project planning schema."
-                  : errorMessage(projectGoalsQuery.error)}
-              </p>
-              <p className="text-xs">
-                File path: <span className="font-mono">{project.cwd}/.t3code/project-goals.json</span>
-              </p>
-            </AlertDescription>
-            <AlertAction>
-              <Button size="sm" variant="outline" onClick={() => void projectGoalsQuery.refetch()}>
-                Retry
-              </Button>
-              {invalidDocument ? (
-                <Button
-                  size="sm"
-                  onClick={async () => {
-                    const confirmed = await api.dialogs.confirm(
-                      "Initialize a new .t3code/project-goals.json file and overwrite the invalid contents?",
-                    );
-                    if (!confirmed) return;
-                    await api.projects.writeFile({
-                      cwd: project.cwd,
-                      relativePath: ".t3code/project-goals.json",
-                      contents: JSON.stringify(createEmptyProjectGoalsDocument(), null, 2).concat("\n"),
-                    });
-                    await projectGoalsQuery.refetch();
-                  }}
-                >
-                  Initialize new file
-                </Button>
-              ) : null}
-            </AlertAction>
-          </Alert>
-        </div>
-      </div>
-    );
-  }
-
-  if (!document) {
-    return null;
-  }
-
-  const standaloneGroups = groupTaskEntries(document.tasks, {
-    includeArchived: showArchivedStandaloneTasks,
-  });
-  const visibleStandaloneTaskCount = standaloneGroups.reduce(
-    (total, group) => total + group.items.length,
-    0,
-  );
-  const selectedGoalTaskGroups = selectedGoal
-    ? groupTaskEntries(selectedGoal.tasks, {
-        includeArchived: showArchivedGoalTasks,
-      })
-    : [];
 
   const saveGoalEditor = async (input: { name: string; status: ProjectGoalStatus }) => {
     if (!goalEditorState) return;
@@ -840,6 +964,165 @@ export default function ProjectOverviewContent({
     }
   };
 
+  const attachThreadToTask = React.useCallback(
+    async (taskId: string, threadId: string) => {
+      await runPlanningMutation(() =>
+        api.projectPlanning.attachThreadToTask({
+          ...planningTarget,
+          taskId,
+          threadId,
+        }),
+      );
+    },
+    [api.projectPlanning, planningTarget, runPlanningMutation],
+  );
+
+  const detachThreadFromTask = React.useCallback(
+    async (taskId: string, threadId: string) => {
+      await runPlanningMutation(() =>
+        api.projectPlanning.detachThreadFromTask({
+          ...planningTarget,
+          taskId,
+          threadId,
+        }),
+      );
+    },
+    [api.projectPlanning, planningTarget, runPlanningMutation],
+  );
+
+  const openLinkedThread = React.useCallback(
+    async (threadId: string) => {
+      await navigate({
+        to: "/$threadId",
+        params: { threadId: threadId as never },
+      });
+    },
+    [navigate],
+  );
+
+  const startTaskThread = React.useCallback(
+    async (taskInfo: TaskThreadDialogTask) => {
+      const nextThreadId = newThreadId();
+      const createdAt = new Date().toISOString();
+      await attachThreadToTask(taskInfo.taskId, nextThreadId);
+      setProjectDraftThreadId(projectId, nextThreadId, {
+        createdAt,
+        title: buildTaskThreadTitle(taskInfo.task),
+        runtimeMode: DEFAULT_RUNTIME_MODE,
+        interactionMode: DEFAULT_INTERACTION_MODE,
+        envMode: "local",
+        branch: null,
+        worktreePath: null,
+      });
+      setPrompt(
+        nextThreadId,
+        buildTaskKickoffPrompt({
+          task: taskInfo.task,
+          ...(taskInfo.goalName ? { goalName: taskInfo.goalName } : {}),
+        }),
+      );
+      await navigate({
+        to: "/$threadId",
+        params: { threadId: nextThreadId },
+      });
+    },
+    [attachThreadToTask, navigate, projectId, setProjectDraftThreadId, setPrompt],
+  );
+
+  const attachThreadCandidates = React.useMemo(
+    () =>
+      attachThreadDialogTask
+        ? getTaskThreadCandidates({
+            projectId,
+            linkedThreadIds: attachThreadDialogTask.task.linkedThreadIds,
+            threads,
+            draftThread: projectDraftThread,
+          })
+        : [],
+    [attachThreadDialogTask, projectDraftThread, projectId, threads],
+  );
+
+  if (!project) {
+    return null;
+  }
+
+  if (projectGoalsQuery.isLoading) {
+    return (
+      <div className="flex h-full min-h-0 flex-1 items-center justify-center px-6 py-10">
+        <div className="w-full max-w-5xl rounded-2xl border border-border bg-card/80 p-6 text-sm text-muted-foreground shadow-sm">
+          Loading project goals...
+        </div>
+      </div>
+    );
+  }
+
+  if (projectGoalsQuery.isError) {
+    const invalidDocument = projectGoalsQuery.error instanceof ProjectGoalsDocumentParseError;
+    return (
+      <div className="flex h-full min-h-0 flex-1 items-center justify-center px-6 py-10">
+        <div className="w-full max-w-3xl">
+          <Alert variant="error">
+            <TargetIcon className="mt-0.5" />
+            <AlertTitle>
+              {invalidDocument ? "Project goals file is invalid" : "Project goals could not be loaded"}
+            </AlertTitle>
+            <AlertDescription>
+              <p>
+                {invalidDocument
+                  ? "The file exists, but its contents do not match the expected project planning schema."
+                  : errorMessage(projectGoalsQuery.error)}
+              </p>
+              <p className="text-xs">
+                File path: <span className="font-mono">{project.cwd}/.t3code/project-goals.json</span>
+              </p>
+            </AlertDescription>
+            <AlertAction>
+              <Button size="sm" variant="outline" onClick={() => void projectGoalsQuery.refetch()}>
+                Retry
+              </Button>
+              {invalidDocument ? (
+                <Button
+                  size="sm"
+                  onClick={async () => {
+                    const confirmed = await api.dialogs.confirm(
+                      "Initialize a new .t3code/project-goals.json file and overwrite the invalid contents?",
+                    );
+                    if (!confirmed) return;
+                    await api.projects.writeFile({
+                      cwd: project.cwd,
+                      relativePath: ".t3code/project-goals.json",
+                      contents: JSON.stringify(createEmptyProjectGoalsDocument(), null, 2).concat("\n"),
+                    });
+                    await projectGoalsQuery.refetch();
+                  }}
+                >
+                  Initialize new file
+                </Button>
+              ) : null}
+            </AlertAction>
+          </Alert>
+        </div>
+      </div>
+    );
+  }
+
+  if (!document) {
+    return null;
+  }
+
+  const standaloneGroups = groupTaskEntries(document.tasks, {
+    includeArchived: showArchivedStandaloneTasks,
+  });
+  const visibleStandaloneTaskCount = standaloneGroups.reduce(
+    (total, group) => total + group.items.length,
+    0,
+  );
+  const selectedGoalTaskGroups = selectedGoal
+    ? groupTaskEntries(selectedGoal.tasks, {
+        includeArchived: showArchivedGoalTasks,
+      })
+    : [];
+
   return (
     <>
       <div className="flex h-full min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-6">
@@ -869,6 +1152,11 @@ export default function ProjectOverviewContent({
               renderTask={(task) => (
                 <TaskCard
                   key={task.id}
+                  linkedThreads={presentLinkedThreads({
+                    linkedThreadIds: task.linkedThreadIds,
+                    threads,
+                    draftThread: projectDraftThread,
+                  })}
                   task={task}
                   open={openTaskRows[standaloneTaskRowKey(task.id)] ?? false}
                   onOpenChange={(open) =>
@@ -876,6 +1164,12 @@ export default function ProjectOverviewContent({
                       ...current,
                       [standaloneTaskRowKey(task.id)]: open,
                     }))
+                  }
+                  onAttachExistingThread={() =>
+                    setAttachThreadDialogTask({
+                      taskId: task.id,
+                      task,
+                    })
                   }
                   onEdit={() =>
                     setTaskEditorState({
@@ -885,6 +1179,7 @@ export default function ProjectOverviewContent({
                       task,
                     })
                   }
+                  onOpenLinkedThread={(threadId) => void openLinkedThread(threadId)}
                   onDelete={async () => {
                     const confirmed = await api.dialogs.confirm(
                       `Delete the task "${task.title || "Untitled task"}"?`,
@@ -906,6 +1201,12 @@ export default function ProjectOverviewContent({
                       }),
                     );
                   }}
+                  onStartNewThread={() =>
+                    startTaskThread({
+                      taskId: task.id,
+                      task,
+                    })
+                  }
                   onCreateSubtask={(subtaskTask) =>
                     runPlanningMutation(() =>
                       api.projectPlanning.createSubtask({
@@ -915,6 +1216,7 @@ export default function ProjectOverviewContent({
                       }),
                     ).then(() => undefined)
                   }
+                  onUnlinkThread={(threadId) => detachThreadFromTask(task.id, threadId)}
                   onUpdateSubtask={(subtaskId, patch) =>
                     runPlanningMutation(() =>
                       api.projectPlanning.updateSubtask({
@@ -1052,6 +1354,11 @@ export default function ProjectOverviewContent({
                 renderTask={(task) => (
                   <TaskCard
                     key={task.id}
+                    linkedThreads={presentLinkedThreads({
+                      linkedThreadIds: task.linkedThreadIds,
+                      threads,
+                      draftThread: projectDraftThread,
+                    })}
                     task={task}
                     open={openTaskRows[goalTaskRowKey(selectedGoal.id, task.id)] ?? false}
                     onOpenChange={(open) =>
@@ -1059,6 +1366,14 @@ export default function ProjectOverviewContent({
                         ...current,
                         [goalTaskRowKey(selectedGoal.id, task.id)]: open,
                       }))
+                    }
+                    onAttachExistingThread={() =>
+                      setAttachThreadDialogTask({
+                        taskId: task.id,
+                        task,
+                        goalId: selectedGoal.id,
+                        goalName: selectedGoal.name,
+                      })
                     }
                     onEdit={() =>
                       setTaskEditorState({
@@ -1069,6 +1384,7 @@ export default function ProjectOverviewContent({
                         task,
                       })
                     }
+                    onOpenLinkedThread={(threadId) => void openLinkedThread(threadId)}
                     onDelete={async () => {
                       const confirmed = await api.dialogs.confirm(
                         `Delete the task "${task.title || "Untitled task"}"?`,
@@ -1090,6 +1406,14 @@ export default function ProjectOverviewContent({
                         }),
                       );
                     }}
+                    onStartNewThread={() =>
+                      startTaskThread({
+                        taskId: task.id,
+                        task,
+                        goalId: selectedGoal.id,
+                        goalName: selectedGoal.name,
+                      })
+                    }
                     onCreateSubtask={(subtaskTask) =>
                       runPlanningMutation(() =>
                         api.projectPlanning.createSubtask({
@@ -1099,6 +1423,7 @@ export default function ProjectOverviewContent({
                         }),
                       ).then(() => undefined)
                     }
+                    onUnlinkThread={(threadId) => detachThreadFromTask(task.id, threadId)}
                     onUpdateSubtask={(subtaskId, patch) =>
                       runPlanningMutation(() =>
                         api.projectPlanning.updateSubtask({
@@ -1127,6 +1452,22 @@ export default function ProjectOverviewContent({
 
       <GoalEditorDialog state={goalEditorState} onClose={closeGoalEditor} onSubmit={saveGoalEditor} />
       <TaskEditorDialog state={taskEditorState} onClose={closeTaskEditor} onSubmit={saveTaskEditor} />
+      <AttachThreadDialog
+        candidates={attachThreadCandidates}
+        open={attachThreadDialogTask !== null}
+        onAttach={async (threadId) => {
+          if (!attachThreadDialogTask) {
+            return;
+          }
+          await attachThreadToTask(attachThreadDialogTask.taskId, threadId);
+          const rowKey = attachThreadDialogTask.goalId
+            ? goalTaskRowKey(attachThreadDialogTask.goalId, attachThreadDialogTask.taskId)
+            : standaloneTaskRowKey(attachThreadDialogTask.taskId);
+          openTaskRow(rowKey);
+        }}
+        onClose={() => setAttachThreadDialogTask(null)}
+        taskTitle={attachThreadDialogTask?.task.title ?? ""}
+      />
     </>
   );
 }

@@ -43,9 +43,11 @@ import type {
   OrchestrationReadModel,
 } from "./orchestration";
 import type {
+  ProjectPlanningAttachThreadToTaskInput,
   ProjectPlanningCreateGoalInput,
   ProjectPlanningCreateSubtaskInput,
   ProjectPlanningCreateTaskInput,
+  ProjectPlanningDetachThreadFromTaskInput,
   ProjectPlanningDeleteGoalInput,
   ProjectPlanningDeleteSubtaskInput,
   ProjectPlanningDeleteTaskInput,
@@ -148,6 +150,12 @@ export interface NativeApi {
     createTask: (input: ProjectPlanningCreateTaskInput) => Promise<ProjectPlanningMutationResult>;
     updateTask: (input: ProjectPlanningUpdateTaskInput) => Promise<ProjectPlanningMutationResult>;
     deleteTask: (input: ProjectPlanningDeleteTaskInput) => Promise<ProjectPlanningMutationResult>;
+    attachThreadToTask: (
+      input: ProjectPlanningAttachThreadToTaskInput,
+    ) => Promise<ProjectPlanningMutationResult>;
+    detachThreadFromTask: (
+      input: ProjectPlanningDetachThreadFromTaskInput,
+    ) => Promise<ProjectPlanningMutationResult>;
     createSubtask: (
       input: ProjectPlanningCreateSubtaskInput,
     ) => Promise<ProjectPlanningMutationResult>;

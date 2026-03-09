@@ -1224,6 +1224,10 @@ export default function Sidebar() {
                                 void navigate({
                                   to: "/project/$projectId",
                                   params: { projectId: project.id },
+                                  search: {
+                                    goalId: undefined,
+                                    taskId: undefined,
+                                  },
                                 });
                               }}
                             >
