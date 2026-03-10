@@ -26,6 +26,7 @@ import {
   WebSocketRequest,
   WsPush,
   WsResponse,
+  ServerProviderStatus,
 } from "@t3tools/contracts";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import {
@@ -271,8 +272,6 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       }),
     ),
   );
-
-  const providerStatuses = yield* providerHealth.getStatuses;
 
   const clients = yield* Ref.make(new Set<WebSocket>());
   const logger = createLogger("ws");
@@ -621,6 +620,23 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const subscriptionsScope = yield* Scope.make("sequential");
   yield* Effect.addFinalizer(() => Scope.close(subscriptionsScope, Exit.void));
 
+  // Push updated provider statuses to connected clients once background health checks finish.
+  let providers: ReadonlyArray<ServerProviderStatus> = [];
+  yield* providerHealth.getStatuses.pipe(
+    Effect.flatMap((statuses) => {
+      providers = statuses;
+      return broadcastPush({
+        type: "push",
+        channel: WS_CHANNELS.serverConfigUpdated,
+        data: {
+          issues: [],
+          providers: statuses,
+        },
+      });
+    }),
+    Effect.forkIn(subscriptionsScope),
+  );
+
   yield* Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) =>
     broadcastPush({
       type: "push",
@@ -635,7 +651,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       channel: WS_CHANNELS.serverConfigUpdated,
       data: {
         issues: event.issues,
-        providers: providerStatuses,
+        providers,
       },
     }),
   ).pipe(Effect.forkIn(subscriptionsScope));
@@ -990,7 +1006,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           keybindingsConfigPath,
           keybindings: keybindingsConfig.keybindings,
           issues: keybindingsConfig.issues,
-          providers: providerStatuses,
+          providers,
           availableEditors,
         };
 
