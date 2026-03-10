@@ -3,6 +3,7 @@ import {
   ChevronRightIcon,
   FolderIcon,
   GitPullRequestIcon,
+  ListTodoIcon,
   PlusIcon,
   RocketIcon,
   SettingsIcon,
@@ -68,6 +69,7 @@ import {
 } from "./ui/sidebar";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
+import { useServerWelcomePayload } from "../hooks/useServerWelcomePayload";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
@@ -286,7 +288,10 @@ export default function Sidebar() {
     (store) => store.clearProjectDraftThreadById,
   );
   const navigate = useNavigate();
-  const isOnSettings = useLocation({ select: (loc) => loc.pathname === "/settings" });
+  const pathname = useLocation({ select: (loc) => loc.pathname });
+  const isOnSettings = pathname === "/settings";
+  const isOnWorkspacePlanning = pathname === "/";
+  const welcome = useServerWelcomePayload();
   const { settings: appSettings } = useAppSettings();
   const routeThreadId = useParams({
     strict: false,
@@ -1154,6 +1159,24 @@ export default function Sidebar() {
           )}
 
           <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                size="sm"
+                isActive={isOnWorkspacePlanning}
+                tooltip={
+                  welcome
+                    ? `Workspace tasks and goals for ${welcome.projectName}`
+                    : "Workspace tasks and goals"
+                }
+                className="gap-2 px-2 py-1.5 text-left"
+                onClick={() => {
+                  void navigate({ to: "/" });
+                }}
+              >
+                <ListTodoIcon className="size-3.5 shrink-0" />
+                <span className="flex-1 truncate text-xs font-medium">Workspace Tasks</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
             {projects.map((project) => {
               const projectThreads = threads
                 .filter((thread) => thread.projectId === project.id)

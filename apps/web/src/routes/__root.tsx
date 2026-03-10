@@ -3,8 +3,6 @@ import {
   Outlet,
   createRootRouteWithContext,
   type ErrorComponentProps,
-  useNavigate,
-  useRouterState,
 } from "@tanstack/react-router";
 import { useEffect, useRef } from "react";
 import { QueryClient, useQueryClient } from "@tanstack/react-query";
@@ -135,13 +133,7 @@ function EventRouter() {
     (store) => store.removeOrphanedTerminalStates,
   );
   const queryClient = useQueryClient();
-  const navigate = useNavigate();
-  const pathname = useRouterState({ select: (state) => state.location.pathname });
-  const pathnameRef = useRef(pathname);
   const lastConfigIssuesSignatureRef = useRef<string | null>(null);
-  const handledBootstrapThreadIdRef = useRef<string | null>(null);
-
-  pathnameRef.current = pathname;
 
   useEffect(() => {
     const api = readNativeApi();
@@ -221,19 +213,6 @@ function EventRouter() {
           return;
         }
         setProjectExpanded(payload.bootstrapProjectId, true);
-
-        if (pathnameRef.current !== "/") {
-          return;
-        }
-        if (handledBootstrapThreadIdRef.current === payload.bootstrapThreadId) {
-          return;
-        }
-        await navigate({
-          to: "/$threadId",
-          params: { threadId: payload.bootstrapThreadId },
-          replace: true,
-        });
-        handledBootstrapThreadIdRef.current = payload.bootstrapThreadId;
       })().catch(() => undefined);
     });
     const unsubServerConfigUpdated = onServerConfigUpdated((payload) => {
@@ -286,7 +265,6 @@ function EventRouter() {
       unsubServerConfigUpdated();
     };
   }, [
-    navigate,
     queryClient,
     removeOrphanedTerminalStates,
     setProjectExpanded,

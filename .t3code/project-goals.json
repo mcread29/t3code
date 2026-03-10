@@ -4,34 +4,34 @@
     {
       "id": "goal_621acd88-01ef-497c-8b4f-f73f37ccd130",
       "name": "task management",
-      "status": "planning",
+      "status": "working",
       "tasks": [
+        {
+          "id": "task_1eb61b85-104c-4317-b52b-972c31f9a918",
+          "title": "assign ai tasks",
+          "description": "",
+          "status": "done",
+          "subtasks": []
+        },
         {
           "id": "task_db927aae-4e00-42fb-880a-fc477479e427",
           "title": "backend mcp for crud",
           "description": "",
-          "status": "working",
+          "status": "done",
           "subtasks": []
         },
         {
           "id": "task_be039b94-cb4f-473a-b1fa-3a947a2ffbe8",
           "title": "t3 goals",
           "description": "goals without a project",
-          "status": "scheduled",
+          "status": "done",
           "subtasks": []
         },
         {
           "id": "task_4d7afc2b-e535-40c8-8619-ddf8bd1bce13",
           "title": "t3 tasks",
           "description": "root tasks without a project",
-          "status": "scheduled",
-          "subtasks": []
-        },
-        {
-          "id": "task_1eb61b85-104c-4317-b52b-972c31f9a918",
-          "title": "assign ai tasks",
-          "description": "",
-          "status": "planning",
+          "status": "done",
           "subtasks": []
         }
       ]

@@ -28,7 +28,21 @@ function ProjectOverviewRouteView() {
     return null;
   }
 
-  return <ProjectOverview key={`${projectId}:${search.goalId ?? ""}:${search.taskId ?? ""}`} projectId={projectId} />;
+  const overviewSearch =
+    search.goalId || search.taskId
+      ? {
+          ...(search.goalId ? { goalId: search.goalId } : {}),
+          ...(search.taskId ? { taskId: search.taskId } : {}),
+        }
+      : undefined;
+
+  return (
+    <ProjectOverview
+      key={`${projectId}:${search.goalId ?? ""}:${search.taskId ?? ""}`}
+      projectId={projectId}
+      {...(overviewSearch ? { search: overviewSearch } : {})}
+    />
+  );
 }
 
 export const Route = createFileRoute("/_chat/project/$projectId")({

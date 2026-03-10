@@ -1,6 +1,5 @@
 import type { ProjectId } from "@t3tools/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useSearch } from "@tanstack/react-router";
 import { PanelLeftIcon, PlusIcon } from "lucide-react";
 import React from "react";
 
@@ -14,7 +13,6 @@ import {
 } from "../ui/sheet";
 import { onProjectPlanningUpdated } from "~/wsNativeApi";
 import { projectPlanningQueryKeys, projectPlanningSnapshotQueryOptions } from "~/lib/projectGoalsReactQuery";
-import { useStore } from "~/store";
 import ProjectOverviewContent from "./ProjectOverviewContent";
 import ProjectOverviewSidebar from "./ProjectOverviewSidebar";
 
@@ -22,12 +20,36 @@ export type ProjectOverviewSection =
   | { kind: "standalone-tasks" }
   | { kind: "goal"; goalId: string };
 
-export default function ProjectOverviewLayout({ projectId }: { projectId: ProjectId }) {
-  const project = useStore((store) => store.projects.find((entry) => entry.id === projectId) ?? null);
+export interface ProjectOverviewLayoutProps {
+  highlightedTaskId?: string;
+  loadingLabel?: string;
+  navigationLabel?: string;
+  projectId: ProjectId | null;
+  search?: {
+    goalId?: string;
+    taskId?: string;
+  };
+  subtitle: string;
+  threadProjectId: ProjectId;
+  title: string;
+  workspaceRoot: string;
+}
+
+export default function ProjectOverviewLayout({
+  highlightedTaskId,
+  loadingLabel = "Loading project goals...",
+  navigationLabel = "Project navigation",
+  projectId,
+  search = {},
+  subtitle,
+  threadProjectId,
+  title,
+  workspaceRoot,
+}: ProjectOverviewLayoutProps) {
   const projectGoalsQuery = useQuery(
     projectPlanningSnapshotQueryOptions({
       projectId,
-      cwd: project?.cwd ?? null,
+      cwd: workspaceRoot,
     }),
   );
   const [desktopSidebarExpanded, setDesktopSidebarExpanded] = React.useState(true);
@@ -36,9 +58,6 @@ export default function ProjectOverviewLayout({ projectId }: { projectId: Projec
   const [taskEditorOpen, setTaskEditorOpen] = React.useState(false);
   const [activeSection, setActiveSection] = React.useState<ProjectOverviewSection>({
     kind: "standalone-tasks",
-  });
-  const search = useSearch({
-    from: "/_chat/project/$projectId",
   });
 
   const goals = projectGoalsQuery.data?.document.goals;
@@ -85,19 +104,15 @@ export default function ProjectOverviewLayout({ projectId }: { projectId: Projec
   }, [activeSection, goals]);
 
   React.useEffect(() => {
-    if (!project?.cwd) {
-      return;
-    }
-
     return onProjectPlanningUpdated((event) => {
-      if (event.projectId !== projectId && event.workspaceRoot !== project.cwd) {
+      if (event.projectId !== projectId && event.workspaceRoot !== workspaceRoot) {
         return;
       }
       void queryClient.invalidateQueries({
-        queryKey: projectPlanningQueryKeys.snapshot(projectId, project.cwd),
+        queryKey: projectPlanningQueryKeys.snapshot(projectId, workspaceRoot),
       });
     });
-  }, [project?.cwd, projectId, queryClient]);
+  }, [projectId, queryClient, workspaceRoot]);
 
   let content: React.ReactNode;
   switch (activeSection.kind) {
@@ -107,11 +122,14 @@ export default function ProjectOverviewLayout({ projectId }: { projectId: Projec
         <ProjectOverviewContent
           activeSection={activeSection}
           goalEditorOpen={goalEditorOpen}
-          {...(search.taskId ? { highlightedTaskId: search.taskId } : {})}
+          {...(highlightedTaskId ? { highlightedTaskId } : {})}
+          loadingLabel={loadingLabel}
           onGoalEditorOpenChange={setGoalEditorOpen}
           onTaskEditorOpenChange={setTaskEditorOpen}
           projectId={projectId}
           taskEditorOpen={taskEditorOpen}
+          threadProjectId={threadProjectId}
+          workspaceRoot={workspaceRoot}
         />
       );
       break;
@@ -119,10 +137,6 @@ export default function ProjectOverviewLayout({ projectId }: { projectId: Projec
       const exhaustiveSection: never = activeSection;
       content = exhaustiveSection;
     }
-  }
-
-  if (!project) {
-    return null;
   }
 
   return (
@@ -134,8 +148,8 @@ export default function ProjectOverviewLayout({ projectId }: { projectId: Projec
           side="left"
         >
           <SheetHeader className="sr-only">
-            <SheetTitle>Project navigation</SheetTitle>
-            <SheetDescription>Navigate project sections.</SheetDescription>
+            <SheetTitle>{navigationLabel}</SheetTitle>
+            <SheetDescription>Navigate planning sections.</SheetDescription>
           </SheetHeader>
           <div className="flex h-full w-full flex-col">
             <ProjectOverviewSidebar
@@ -169,15 +183,15 @@ export default function ProjectOverviewLayout({ projectId }: { projectId: Projec
             </Button>
             <h1
               className="min-w-0 shrink truncate text-sm font-medium text-foreground"
-              title={project.name}
+              title={title}
             >
-              {project.name}
+              {title}
             </h1>
             <p
               className="min-w-0 flex-1 truncate text-sm text-muted-foreground"
-              title={project.cwd}
+              title={subtitle}
             >
-              {project.cwd}
+              {subtitle}
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-2">

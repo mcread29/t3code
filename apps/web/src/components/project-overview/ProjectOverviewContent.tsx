@@ -751,20 +751,28 @@ export default function ProjectOverviewContent({
   activeSection,
   goalEditorOpen,
   highlightedTaskId,
+  loadingLabel,
   onGoalEditorOpenChange,
   onTaskEditorOpenChange,
   projectId,
   taskEditorOpen,
+  threadProjectId,
+  workspaceRoot,
 }: {
   activeSection: ProjectOverviewSection;
   goalEditorOpen: boolean;
   highlightedTaskId?: string;
+  loadingLabel?: string;
   onGoalEditorOpenChange: (open: boolean) => void;
   onTaskEditorOpenChange: (open: boolean) => void;
-  projectId: ProjectId;
+  projectId: ProjectId | null;
   taskEditorOpen: boolean;
+  threadProjectId: ProjectId;
+  workspaceRoot: string;
 }) {
-  const project = useStore((store) => store.projects.find((entry) => entry.id === projectId) ?? null);
+  const threadProject = useStore(
+    (store) => store.projects.find((entry) => entry.id === threadProjectId) ?? null,
+  );
   const threads = useStore((store) => store.threads);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -783,10 +791,10 @@ export default function ProjectOverviewContent({
   const projectGoalsQuery = useQuery(
     projectPlanningSnapshotQueryOptions({
       projectId,
-      cwd: project?.cwd ?? null,
+      cwd: workspaceRoot,
     }),
   );
-  const snapshotQueryKey = projectPlanningQueryKeys.snapshot(projectId, project?.cwd ?? null);
+  const snapshotQueryKey = projectPlanningQueryKeys.snapshot(projectId, workspaceRoot);
 
   const runPlanningMutation = React.useCallback(
     async (
@@ -813,13 +821,13 @@ export default function ProjectOverviewContent({
 
   const planningTarget = React.useMemo(
     () => ({
-      projectId,
-      ...(project?.cwd ? { workspaceRoot: project.cwd } : {}),
+      ...(projectId ? { projectId } : {}),
+      workspaceRoot,
       ...(projectGoalsQuery.data?.revision
         ? { expectedRevision: projectGoalsQuery.data.revision }
         : {}),
     }),
-    [project?.cwd, projectGoalsQuery.data?.revision, projectId],
+    [projectGoalsQuery.data?.revision, projectId, workspaceRoot],
   );
 
   React.useEffect(() => {
@@ -852,7 +860,7 @@ export default function ProjectOverviewContent({
     selectedGoalId === null ? null : document?.goals.find((goal) => goal.id === selectedGoalId) ?? null;
   const selectedGoalHasArchivedTasks =
     selectedGoal?.tasks.some((task) => task.status === "archived") ?? false;
-  const projectDraftThread = getDraftThreadByProjectId(projectId);
+  const projectDraftThread = getDraftThreadByProjectId(threadProjectId);
 
   const openTaskRow = React.useCallback((rowKey: string) => {
     setOpenTaskRows((current) => ({ ...current, [rowKey]: true }));
@@ -1005,7 +1013,7 @@ export default function ProjectOverviewContent({
       const nextThreadId = newThreadId();
       const createdAt = new Date().toISOString();
       await attachThreadToTask(taskInfo.taskId, nextThreadId);
-      setProjectDraftThreadId(projectId, nextThreadId, {
+      setProjectDraftThreadId(threadProjectId, nextThreadId, {
         createdAt,
         title: buildTaskThreadTitle(taskInfo.task),
         runtimeMode: DEFAULT_RUNTIME_MODE,
@@ -1026,23 +1034,23 @@ export default function ProjectOverviewContent({
         params: { threadId: nextThreadId },
       });
     },
-    [attachThreadToTask, navigate, projectId, setProjectDraftThreadId, setPrompt],
+    [attachThreadToTask, navigate, setProjectDraftThreadId, setPrompt, threadProjectId],
   );
 
   const attachThreadCandidates = React.useMemo(
     () =>
       attachThreadDialogTask
         ? getTaskThreadCandidates({
-            projectId,
+            projectId: threadProjectId,
             linkedThreadIds: attachThreadDialogTask.task.linkedThreadIds,
             threads,
             draftThread: projectDraftThread,
           })
         : [],
-    [attachThreadDialogTask, projectDraftThread, projectId, threads],
+    [attachThreadDialogTask, projectDraftThread, threadProjectId, threads],
   );
 
-  if (!project) {
+  if (!threadProject) {
     return null;
   }
 
@@ -1050,7 +1058,7 @@ export default function ProjectOverviewContent({
     return (
       <div className="flex h-full min-h-0 flex-1 items-center justify-center px-6 py-10">
         <div className="w-full max-w-5xl rounded-2xl border border-border bg-card/80 p-6 text-sm text-muted-foreground shadow-sm">
-          Loading project goals...
+          {loadingLabel ?? "Loading project goals..."}
         </div>
       </div>
     );
@@ -1073,7 +1081,7 @@ export default function ProjectOverviewContent({
                   : errorMessage(projectGoalsQuery.error)}
               </p>
               <p className="text-xs">
-                File path: <span className="font-mono">{project.cwd}/.t3code/project-goals.json</span>
+                File path: <span className="font-mono">{workspaceRoot}/.t3code/project-goals.json</span>
               </p>
             </AlertDescription>
             <AlertAction>
@@ -1089,7 +1097,7 @@ export default function ProjectOverviewContent({
                     );
                     if (!confirmed) return;
                     await api.projects.writeFile({
-                      cwd: project.cwd,
+                      cwd: workspaceRoot,
                       relativePath: ".t3code/project-goals.json",
                       contents: JSON.stringify(createEmptyProjectGoalsDocument(), null, 2).concat("\n"),
                     });
