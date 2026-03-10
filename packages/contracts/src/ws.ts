@@ -209,6 +209,7 @@ export type WsResponse = typeof WsResponse.Type;
 
 export const WsWelcomePayload = Schema.Struct({
   cwd: TrimmedNonEmptyString,
+  homeDirectory: Schema.optional(TrimmedNonEmptyString),
   projectName: TrimmedNonEmptyString,
   bootstrapProjectId: Schema.optional(ProjectId),
   bootstrapThreadId: Schema.optional(ThreadId),

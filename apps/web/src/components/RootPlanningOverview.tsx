@@ -22,6 +22,9 @@ export default function RootPlanningOverview() {
     return <RootPlanningOverviewLoadingState />;
   }
 
+  const planningRoot = welcome.homeDirectory ?? welcome.cwd;
+  const title = planningRoot === welcome.cwd ? welcome.projectName : "Home";
+
   const matchedProject =
     (welcome.bootstrapProjectId
       ? projects.find((project) => project.id === welcome.bootstrapProjectId) ?? null
@@ -35,13 +38,13 @@ export default function RootPlanningOverview() {
 
   return (
     <ProjectOverviewLayout
-      loadingLabel="Loading workspace goals..."
-      navigationLabel="Workspace navigation"
-      projectId={matchedProject.id}
-      subtitle={welcome.cwd}
+      loadingLabel="Loading home goals..."
+      navigationLabel="Home navigation"
+      projectId={null}
+      subtitle={planningRoot}
       threadProjectId={matchedProject.id}
-      title={welcome.projectName}
-      workspaceRoot={welcome.cwd}
+      title={title}
+      workspaceRoot={planningRoot}
     />
   );
 }

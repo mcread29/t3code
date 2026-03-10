@@ -7,6 +7,7 @@
  * @module Server
  */
 import http from "node:http";
+import os from "node:os";
 import type { Duplex } from "node:stream";
 
 import Mime from "@effect/platform-node/Mime";
@@ -1101,6 +1102,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       channel: WS_CHANNELS.serverWelcome,
       data: {
         cwd,
+        homeDirectory: os.homedir(),
         projectName,
         ...(welcomeBootstrapProjectId ? { bootstrapProjectId: welcomeBootstrapProjectId } : {}),
         ...(welcomeBootstrapThreadId ? { bootstrapThreadId: welcomeBootstrapThreadId } : {}),

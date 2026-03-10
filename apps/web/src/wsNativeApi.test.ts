@@ -96,7 +96,11 @@ describe("wsNativeApi", () => {
     const listener = vi.fn();
     onServerWelcome(listener);
 
-    const payload = { cwd: "/tmp/workspace", projectName: "t3-code" };
+    const payload = {
+      cwd: "/tmp/workspace",
+      homeDirectory: "/tmp/home",
+      projectName: "t3-code",
+    };
     emitPush(WS_CHANNELS.serverWelcome, payload);
 
     expect(listener).toHaveBeenCalledTimes(1);
@@ -119,6 +123,7 @@ describe("wsNativeApi", () => {
 
     emitPush(WS_CHANNELS.serverWelcome, {
       cwd: "/tmp/workspace",
+      homeDirectory: "/tmp/home",
       projectName: "t3-code",
       bootstrapProjectId: "project-1",
       bootstrapThreadId: "thread-1",
@@ -128,6 +133,7 @@ describe("wsNativeApi", () => {
     expect(listener).toHaveBeenCalledWith(
       expect.objectContaining({
         cwd: "/tmp/workspace",
+        homeDirectory: "/tmp/home",
         projectName: "t3-code",
         bootstrapProjectId: "project-1",
         bootstrapThreadId: "thread-1",
@@ -144,11 +150,19 @@ describe("wsNativeApi", () => {
     onServerWelcome(listener);
 
     emitPush(WS_CHANNELS.serverWelcome, { cwd: 42, projectName: "t3-code" });
-    emitPush(WS_CHANNELS.serverWelcome, { cwd: "/tmp/workspace", projectName: "t3-code" });
+    emitPush(WS_CHANNELS.serverWelcome, {
+      cwd: "/tmp/workspace",
+      homeDirectory: "/tmp/home",
+      projectName: "t3-code",
+    });
 
     expect(listener).toHaveBeenCalledTimes(1);
     expect(listener).toHaveBeenCalledWith(
-      expect.objectContaining({ cwd: "/tmp/workspace", projectName: "t3-code" }),
+      expect.objectContaining({
+        cwd: "/tmp/workspace",
+        homeDirectory: "/tmp/home",
+        projectName: "t3-code",
+      }),
     );
     expect(warnSpy).toHaveBeenCalledTimes(1);
     expect(warnSpy).toHaveBeenCalledWith("Dropped inbound WebSocket push payload", {

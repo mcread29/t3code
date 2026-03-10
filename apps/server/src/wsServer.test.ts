@@ -502,6 +502,7 @@ describe("WebSocket Server", () => {
     expect(message.channel).toBe(WS_CHANNELS.serverWelcome);
     expect(message.data).toEqual({
       cwd: "/test/project",
+      homeDirectory: os.homedir(),
       projectName: "project",
     });
   });
@@ -596,6 +597,7 @@ describe("WebSocket Server", () => {
     expect(welcome.data).toEqual(
       expect.objectContaining({
         cwd: "/test/bootstrap-workspace",
+        homeDirectory: os.homedir(),
         projectName: "bootstrap-workspace",
         bootstrapProjectId: expect.any(String),
         bootstrapThreadId: expect.any(String),
@@ -697,6 +699,7 @@ describe("WebSocket Server", () => {
     expect(secondWelcome.data).toEqual(
       expect.objectContaining({
         cwd,
+        homeDirectory: os.homedir(),
         projectName: "bootstrap-existing",
         bootstrapProjectId: firstBootstrapProjectId,
         bootstrapThreadId: firstBootstrapThreadId,
