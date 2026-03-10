@@ -1,0 +1,4 @@
+interface:
+  display_name: "Upstream Merge Check"
+  short_description: "Preview upstream merge conflicts safely"
+  default_prompt: "Use $upstream-merge-check to fetch upstream, dry-run merging upstream/main into the current branch, and report any conflicts."
