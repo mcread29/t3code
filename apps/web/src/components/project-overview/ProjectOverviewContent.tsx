@@ -58,6 +58,7 @@ import {
   ProjectPlanningRpcError,
   unwrapMutationResult,
 } from "~/lib/projectGoalsReactQuery";
+import { getScheduledTaskLabel, isScheduledTaskOverdue } from "~/lib/taskSchedule";
 import {
   buildTaskKickoffPrompt,
   buildTaskThreadTitle,
@@ -269,11 +270,13 @@ function TaskEditorDialog({
     title: string;
     description: string;
     status: ProjectGoalStatus;
+    scheduledDate: string | null;
   }) => Promise<void>;
 }) {
   const [title, setTitle] = React.useState("");
   const [description, setDescription] = React.useState("");
   const [status, setStatus] = React.useState<ProjectGoalStatus>("planning");
+  const [scheduledDate, setScheduledDate] = React.useState("");
   const [saving, setSaving] = React.useState(false);
 
   React.useEffect(() => {
@@ -282,11 +285,13 @@ function TaskEditorDialog({
       setTitle(state.task.title);
       setDescription(state.task.description);
       setStatus(state.task.status);
+      setScheduledDate(state.task.scheduledDate ?? "");
       return;
     }
     setTitle("");
     setDescription("");
     setStatus("planning");
+    setScheduledDate("");
   }, [state]);
 
   const submit = async (event: React.FormEvent) => {
@@ -297,6 +302,7 @@ function TaskEditorDialog({
         title: title.trim(),
         description,
         status,
+        scheduledDate: scheduledDate.length > 0 ? scheduledDate : null,
       });
       onClose();
     } catch {
@@ -337,6 +343,16 @@ function TaskEditorDialog({
             <div className="space-y-2">
               <Label>Status</Label>
               <StatusSelect value={status} onValueChange={setStatus} ariaLabel="Task status" />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="project-task-scheduled-date">Scheduled Date</Label>
+              <Input
+                id="project-task-scheduled-date"
+                nativeInput
+                type="date"
+                value={scheduledDate}
+                onChange={(event) => setScheduledDate(event.currentTarget.value)}
+              />
             </div>
           </DialogPanel>
           <DialogFooter>
@@ -492,6 +508,16 @@ function TaskCard({
   const [editingSubtaskIndex, setEditingSubtaskIndex] = React.useState<number | null>(null);
   const [editingSubtaskText, setEditingSubtaskText] = React.useState("");
   const [pendingStatus, setPendingStatus] = React.useState<ProjectGoalStatus>(task.status);
+  const scheduleLabel = getScheduledTaskLabel({
+    scheduledDate: task.scheduledDate,
+    status: task.status,
+  });
+  const scheduleVariant = isScheduledTaskOverdue({
+    scheduledDate: task.scheduledDate,
+    status: task.status,
+  })
+    ? "warning"
+    : "secondary";
 
   React.useEffect(() => {
     setPendingStatus(task.status);
@@ -529,6 +555,7 @@ function TaskCard({
               <div className="flex flex-wrap items-center gap-2">
                 <p className="truncate text-sm font-medium text-foreground">{task.title || "Untitled task"}</p>
                 <StatusBadge status={task.status} />
+                {scheduleLabel ? <Badge variant={scheduleVariant}>{scheduleLabel}</Badge> : null}
                 <Badge variant="outline">{linkedThreads.length} linked</Badge>
               </div>
               <p className="mt-1 text-xs text-muted-foreground">Subtasks {taskProgressLabel(task)}</p>
@@ -566,6 +593,14 @@ function TaskCard({
           <div className="border-t border-border/80 px-4 py-4">
             <div className="space-y-4">
               <div>
+                {scheduleLabel ? (
+                  <div className="mb-4 space-y-2">
+                    <p className="text-xs font-medium tracking-[0.14em] text-muted-foreground uppercase">
+                      Scheduled
+                    </p>
+                    <Badge variant={scheduleVariant}>{scheduleLabel}</Badge>
+                  </div>
+                ) : null}
                 <div className="mb-4 space-y-2">
                   <div className="flex items-center justify-between gap-3">
                     <p className="text-xs font-medium tracking-[0.14em] text-muted-foreground uppercase">
@@ -916,6 +951,7 @@ export default function ProjectOverviewContent({
     title: string;
     description: string;
     status: ProjectGoalStatus;
+    scheduledDate: string | null;
   }) => {
     if (!taskEditorState) return;
 
@@ -926,6 +962,7 @@ export default function ProjectOverviewContent({
           title: input.title,
           description: input.description,
           status: input.status,
+          ...(input.scheduledDate !== null ? { scheduledDate: input.scheduledDate } : {}),
         }),
       );
       openTaskRow(standaloneTaskRowKey(result.changedId));
@@ -940,6 +977,7 @@ export default function ProjectOverviewContent({
           title: input.title,
           description: input.description,
           status: input.status,
+          ...(input.scheduledDate !== null ? { scheduledDate: input.scheduledDate } : {}),
         }),
       );
       openTaskRow(goalTaskRowKey(taskEditorState.goalId, result.changedId));
@@ -954,6 +992,7 @@ export default function ProjectOverviewContent({
           title: input.title,
           description: input.description,
           status: input.status,
+          scheduledDate: input.scheduledDate,
         }),
       );
       return;
@@ -967,6 +1006,7 @@ export default function ProjectOverviewContent({
           title: input.title,
           description: input.description,
           status: input.status,
+          scheduledDate: input.scheduledDate,
         }),
       );
     }

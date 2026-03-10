@@ -1,0 +1,15 @@
+{
+  "version": 4,
+  "goals": [],
+  "tasks": [
+    {
+      "id": "task_69b82317-277a-447d-9d9d-ef89ddc3be9c",
+      "title": "test",
+      "description": "",
+      "status": "planning",
+      "scheduledDate": "2026-03-26",
+      "subtasks": [],
+      "linkedThreadIds": []
+    }
+  ]
+}

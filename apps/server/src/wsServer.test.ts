@@ -1764,6 +1764,106 @@ describe("WebSocket Server", () => {
     expect(persistedDocument.tasks[0]?.linkedThreadIds).toEqual([]);
   });
 
+  it("routes task scheduling create and update mutations over websocket", async () => {
+    const workspace = makeTempDir("t3code-ws-project-planning-schedule-");
+
+    server = await createTestServer({ cwd: "/test" });
+    const addr = server.address();
+    const port = typeof addr === "object" && addr !== null ? addr.port : 0;
+
+    const ws = await connectWs(port);
+    connections.push(ws);
+    await waitForMessage(ws);
+
+    const createResponse = await sendRequest(ws, WS_METHODS.projectPlanningCreateTask, {
+      workspaceRoot: workspace,
+      title: "Scheduled task",
+      description: "Has a date",
+      status: "scheduled",
+      scheduledDate: "2026-03-20",
+    });
+
+    expect(createResponse.error).toBeUndefined();
+    expect(createResponse.result).toEqual(
+      expect.objectContaining({
+        type: "success",
+        snapshot: expect.objectContaining({
+          document: expect.objectContaining({
+            version: 4,
+            tasks: [
+              expect.objectContaining({
+                title: "Scheduled task",
+                scheduledDate: "2026-03-20",
+              }),
+            ],
+          }),
+        }),
+      }),
+    );
+
+    const createdTaskId = (createResponse.result as { changedId: string }).changedId;
+
+    const updateResponse = await sendRequest(ws, WS_METHODS.projectPlanningUpdateTask, {
+      workspaceRoot: workspace,
+      taskId: createdTaskId,
+      scheduledDate: null,
+    });
+
+    expect(updateResponse.error).toBeUndefined();
+    expect(updateResponse.result).toEqual(
+      expect.objectContaining({
+        type: "success",
+        changedId: createdTaskId,
+        snapshot: expect.objectContaining({
+          document: expect.objectContaining({
+            tasks: [
+              expect.objectContaining({
+                id: createdTaskId,
+                scheduledDate: null,
+              }),
+            ],
+          }),
+        }),
+      }),
+    );
+
+    const snapshotResponse = await sendRequest(ws, WS_METHODS.projectPlanningGetSnapshot, {
+      workspaceRoot: workspace,
+    });
+
+    expect(snapshotResponse.error).toBeUndefined();
+    expect(snapshotResponse.result).toEqual(
+      expect.objectContaining({
+        type: "success",
+        snapshot: expect.objectContaining({
+          document: expect.objectContaining({
+            tasks: [
+              expect.objectContaining({
+                id: createdTaskId,
+                scheduledDate: null,
+              }),
+            ],
+          }),
+        }),
+      }),
+    );
+
+    const persistedDocument = JSON.parse(
+      fs.readFileSync(path.join(workspace, ".t3code", "project-goals.json"), "utf8"),
+    ) as {
+      version: number;
+      tasks: Array<{ id: string; scheduledDate: string | null }>;
+    };
+
+    expect(persistedDocument.version).toBe(4);
+    expect(persistedDocument.tasks[0]).toEqual(
+      expect.objectContaining({
+        id: createdTaskId,
+        scheduledDate: null,
+      }),
+    );
+  });
+
   it("routes git core methods over websocket", async () => {
     const listBranches = vi.fn(() =>
       Effect.succeed({

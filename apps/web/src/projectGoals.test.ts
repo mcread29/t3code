@@ -22,7 +22,7 @@ describe("projectGoals", () => {
     expect(parseProjectGoalsDocument(null)).toEqual(createEmptyProjectGoalsDocument());
   });
 
-  it("migrates v1 documents to v3 with stable ids", () => {
+  it("migrates v1 documents to v4 with stable ids", () => {
     const document = parseProjectGoalsDocument(
       JSON.stringify({
         version: 1,
@@ -31,12 +31,12 @@ describe("projectGoals", () => {
       }),
     );
 
-    expect(document.version).toBe(3);
+    expect(document.version).toBe(4);
     expect(document.goals[0]?.id).toEqual(expect.any(String));
     expect(document.tasks).toEqual([]);
   });
 
-  it("migrates v2 documents to v3 with empty linked thread ids", () => {
+  it("migrates v2 documents to v4 with empty linked thread ids", () => {
     const document = parseProjectGoalsDocument(
       JSON.stringify({
         version: 2,
@@ -68,9 +68,33 @@ describe("projectGoals", () => {
       }),
     );
 
-    expect(document.version).toBe(3);
+    expect(document.version).toBe(4);
     expect(document.goals[0]?.tasks[0]?.linkedThreadIds).toEqual([]);
+    expect(document.goals[0]?.tasks[0]?.scheduledDate).toBeNull();
     expect(document.tasks[0]?.linkedThreadIds).toEqual([]);
+    expect(document.tasks[0]?.scheduledDate).toBeNull();
+  });
+
+  it("migrates v3 documents to v4 with null scheduled dates", () => {
+    const document = parseProjectGoalsDocument(
+      JSON.stringify({
+        version: 3,
+        goals: [],
+        tasks: [
+          {
+            id: "task_1",
+            title: "Cleanup",
+            description: "",
+            status: "planning",
+            subtasks: [],
+            linkedThreadIds: [],
+          },
+        ],
+      }),
+    );
+
+    expect(document.version).toBe(4);
+    expect(document.tasks[0]?.scheduledDate).toBeNull();
   });
 
   it("rejects invalid schema shapes", () => {
@@ -80,6 +104,28 @@ describe("projectGoals", () => {
           version: 1,
           goals: [{ name: "Launch", status: "later", tasks: [] }],
           tasks: [],
+        }),
+      ),
+    ).toThrow(ProjectGoalsDocumentParseError);
+  });
+
+  it("rejects invalid scheduled dates", () => {
+    expect(() =>
+      parseProjectGoalsDocument(
+        JSON.stringify({
+          version: 4,
+          goals: [],
+          tasks: [
+            {
+              id: "task_1",
+              title: "Launch",
+              description: "",
+              status: "planning",
+              scheduledDate: "03/10/2026",
+              subtasks: [],
+              linkedThreadIds: [],
+            },
+          ],
         }),
       ),
     ).toThrow(ProjectGoalsDocumentParseError);
@@ -101,14 +147,26 @@ describe("projectGoals", () => {
 
     expect(
       serializeProjectGoalsDocument({
-        version: 3,
+        version: 4,
         goals: [betaGoal, alphaGoal],
         tasks: [
-          createTask({ id: "task_zebra", title: "zebra", description: "", status: "archived" }),
-          createTask({ id: "task_apple", title: "apple", description: "", status: "working" }),
+          createTask({
+            id: "task_zebra",
+            title: "zebra",
+            description: "",
+            status: "archived",
+            scheduledDate: "2026-03-22",
+          }),
+          createTask({
+            id: "task_apple",
+            title: "apple",
+            description: "",
+            status: "working",
+            scheduledDate: "2026-03-10",
+          }),
         ],
       }),
-    ).toContain('"version": 3');
+    ).toContain('"version": 4');
   });
 
   it("groups goals by status in the fixed order", () => {
@@ -133,7 +191,13 @@ describe("projectGoals", () => {
   it("groups tasks by status in the fixed order", () => {
     const groups = groupStandaloneTasksByStatus([
       createTask({ id: "task_backlog", title: "Backlog", description: "", status: "planning" }),
-      createTask({ id: "task_soon", title: "Soon", description: "", status: "scheduled" }),
+      createTask({
+        id: "task_soon",
+        title: "Soon",
+        description: "",
+        status: "scheduled",
+        scheduledDate: "2026-03-11",
+      }),
       createTask({ id: "task_now", title: "Now", description: "", status: "working" }),
       createTask({ id: "task_done", title: "Done", description: "", status: "done" }),
       createTask({ id: "task_archive", title: "Archive", description: "", status: "archived" }),
@@ -144,6 +208,28 @@ describe("projectGoals", () => {
     expect(groups[1]?.items.map((task) => task.title)).toEqual(["Soon"]);
     expect(groups[2]?.items.map((task) => task.title)).toEqual(["Now"]);
     expect(groups[3]?.items.map((task) => task.title)).toEqual(["Done"]);
+  });
+
+  it("sorts dated tasks before undated tasks within a status group", () => {
+    const groups = groupStandaloneTasksByStatus([
+      createTask({ id: "task_undated", title: "Undated", description: "", status: "planning" }),
+      createTask({
+        id: "task_later",
+        title: "Later",
+        description: "",
+        status: "planning",
+        scheduledDate: "2026-03-15",
+      }),
+      createTask({
+        id: "task_sooner",
+        title: "Sooner",
+        description: "",
+        status: "planning",
+        scheduledDate: "2026-03-11",
+      }),
+    ]);
+
+    expect(groups[0]?.items.map((task) => task.title)).toEqual(["Sooner", "Later", "Undated"]);
   });
 
   it("preserves authored subtask order", () => {
@@ -179,6 +265,7 @@ describe("projectGoals", () => {
             title: "Task",
             description: "",
             status: "planning",
+            scheduledDate: "2026-03-20",
             subtasks: [],
             linkedThreadIds: ["  thread-b  ", "thread-a", "thread-b"],
           },
@@ -187,13 +274,14 @@ describe("projectGoals", () => {
     );
 
     expect(document.tasks[0]?.linkedThreadIds).toEqual(["thread-a", "thread-b"]);
+    expect(document.tasks[0]?.scheduledDate).toBe("2026-03-20");
   });
 
   it("updates a goal by id", () => {
     const goal = createGoal({ id: "goal_1", name: "Goal", status: "planning" });
     const updated = updateGoal(
       {
-        version: 3,
+        version: 4,
         goals: [goal],
         tasks: [],
       },
@@ -208,7 +296,7 @@ describe("projectGoals", () => {
     const task = createTask({ id: "task_1", title: "B", description: "", status: "planning" });
     const updated = updateTask(
       {
-        version: 3,
+        version: 4,
         goals: [],
         tasks: [task],
       },
@@ -226,7 +314,7 @@ describe("projectGoals", () => {
 
   it("attaches and detaches thread ids idempotently", () => {
     const document = {
-      version: 3 as const,
+      version: 4 as const,
       goals: [],
       tasks: [createTask({ id: "task_1", title: "Task", description: "", status: "planning" })],
     };
@@ -268,7 +356,7 @@ describe("projectGoals", () => {
 
   it("finds linked tasks for standalone and goal-scoped tasks", () => {
     const document = {
-      version: 3 as const,
+      version: 4 as const,
       goals: [
         createGoal({
           id: "goal_1",

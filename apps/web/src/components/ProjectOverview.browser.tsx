@@ -6,6 +6,16 @@ import { page } from "vitest/browser";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
+import {
+  addGoal,
+  addStandaloneTask,
+  addTaskToGoal,
+  createGoal,
+  createTask,
+  parseProjectGoalsDocument,
+  updateTask,
+  type ProjectGoalsDocument,
+} from "../projectGoals";
 import { useStore } from "../store";
 import ProjectOverview from "./ProjectOverview";
 
@@ -19,10 +29,105 @@ vi.mock("~/nativeApi", () => ({
 }));
 
 function buildNativeApi(input: {
-  readFile: ReturnType<typeof vi.fn>;
-  writeFile?: ReturnType<typeof vi.fn>;
-  confirm?: ReturnType<typeof vi.fn>;
+  readFile: (input: { cwd: string; relativePath: string }) => Promise<{
+    relativePath: string;
+    contents: string | null;
+  }>;
+  writeFile?: (input: {
+    cwd: string;
+    relativePath: string;
+    contents: string;
+  }) => Promise<{ relativePath: string }>;
+  confirm?: (message: string) => Promise<boolean>;
+  createGoal?: (input: { name: string; status?: string }) => Promise<unknown>;
+  createTask?: (input: {
+    goalId?: string;
+    title: string;
+    description?: string;
+    status?: string;
+    scheduledDate?: string;
+  }) => Promise<unknown>;
+  updateTask?: (input: {
+    taskId: string;
+    title?: string;
+    description?: string;
+    status?: string;
+    scheduledDate?: string | null;
+  }) => Promise<unknown>;
 }): NativeApi {
+  let document: ProjectGoalsDocument | null = null;
+  let revision = 1;
+
+  const ensureDocument = async () => {
+    if (document) {
+      return document;
+    }
+
+    const result = await input.readFile({
+      cwd: PROJECT_CWD,
+      relativePath: ".t3code/project-goals.json",
+    });
+    document = parseProjectGoalsDocument(result.contents);
+    return document;
+  };
+
+  const buildSnapshot = async () => ({
+    revision: `rev-${revision}`,
+    document: await ensureDocument(),
+  });
+
+  const createGoalMock =
+    input.createGoal ??
+    vi.fn(async ({ name, status }) => {
+      const nextGoal = createGoal({ name, status: status ?? "planning" });
+      document = addGoal(await ensureDocument(), nextGoal);
+      revision += 1;
+      return {
+        type: "success" as const,
+        changedId: nextGoal.id,
+        snapshot: await buildSnapshot(),
+      };
+    });
+
+  const createTaskMock =
+    input.createTask ??
+    vi.fn(async ({ goalId, title, description, status, scheduledDate }) => {
+      const nextTask = createTask({
+        title,
+        description: description ?? "",
+        status: status ?? "planning",
+        scheduledDate: scheduledDate ?? null,
+      });
+      document = goalId
+        ? (addTaskToGoal(await ensureDocument(), goalId, nextTask) ?? (await ensureDocument()))
+        : addStandaloneTask(await ensureDocument(), nextTask);
+      revision += 1;
+      return {
+        type: "success" as const,
+        changedId: nextTask.id,
+        snapshot: await buildSnapshot(),
+      };
+    });
+
+  const updateTaskMock =
+    input.updateTask ??
+    vi.fn(async ({ taskId, title, description, status, scheduledDate }) => {
+      document =
+        updateTask(await ensureDocument(), taskId, (task) => ({
+          ...task,
+          ...(title !== undefined ? { title } : {}),
+          ...(description !== undefined ? { description } : {}),
+          ...(status !== undefined ? { status } : {}),
+          ...(scheduledDate !== undefined ? { scheduledDate } : {}),
+        })) ?? (await ensureDocument());
+      revision += 1;
+      return {
+        type: "success" as const,
+        changedId: taskId,
+        snapshot: await buildSnapshot(),
+      };
+    });
+
   return {
     projects: {
       readFile: input.readFile,
@@ -30,6 +135,24 @@ function buildNativeApi(input: {
     },
     dialogs: {
       confirm: input.confirm ?? vi.fn().mockResolvedValue(true),
+    },
+    projectPlanning: {
+      getSnapshot: vi.fn(async () => ({
+        type: "success" as const,
+        snapshot: await buildSnapshot(),
+      })),
+      createGoal: createGoalMock,
+      updateGoal: vi.fn(),
+      deleteGoal: vi.fn(),
+      createTask: createTaskMock,
+      updateTask: updateTaskMock,
+      deleteTask: vi.fn(),
+      attachThreadToTask: vi.fn(),
+      detachThreadFromTask: vi.fn(),
+      createSubtask: vi.fn(),
+      updateSubtask: vi.fn(),
+      deleteSubtask: vi.fn(),
+      onUpdated: vi.fn(() => () => {}),
     },
   } as unknown as NativeApi;
 }
@@ -499,20 +622,37 @@ describe("ProjectOverview", () => {
     await expect.element(page.getByRole("dialog")).toBeVisible();
     await expect.element(page.getByRole("heading", { name: "New Task" })).toBeVisible();
     await expect.element(page.getByLabelText("Title")).toBeVisible();
+    await expect.element(page.getByLabelText("Scheduled Date")).toBeVisible();
 
     await screen.unmount();
   });
 
-  it("creates the first goal and writes the workspace planning file", async () => {
-    const writeFile = vi.fn().mockResolvedValue({
-      relativePath: ".t3code/project-goals.json",
-    });
+  it("creates the first goal through the project planning mutation", async () => {
+    const createGoalMock = vi.fn(async ({ name, status }) => ({
+      type: "success" as const,
+      changedId: "goal_1",
+      snapshot: {
+        revision: "rev-2",
+        document: {
+          version: 4 as const,
+          goals: [
+            {
+              id: "goal_1",
+              name,
+              status: status ?? "planning",
+              tasks: [],
+            },
+          ],
+          tasks: [],
+        },
+      },
+    }));
     currentNativeApi = buildNativeApi({
       readFile: vi.fn().mockResolvedValue({
         relativePath: ".t3code/project-goals.json",
         contents: null,
       }),
-      writeFile,
+      createGoal: createGoalMock,
     });
 
     const screen = await mountOverview();
@@ -521,11 +661,178 @@ describe("ProjectOverview", () => {
     await page.getByLabelText("Name").fill("Ship v1");
     await page.getByRole("button", { name: "Create Goal" }).click();
 
-    expect(writeFile).toHaveBeenCalledWith({
-      cwd: PROJECT_CWD,
-      relativePath: ".t3code/project-goals.json",
-      contents: expect.stringContaining('"name": "Ship v1"'),
+    expect(createGoalMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: "Ship v1",
+      }),
+    );
+    await expect.element(page.getByRole("button", { name: "Ship v1" })).toBeVisible();
+
+    await screen.unmount();
+  });
+
+  it("renders scheduled and overdue badges for tasks", async () => {
+    currentNativeApi = buildNativeApi({
+      readFile: vi.fn().mockResolvedValue({
+        relativePath: ".t3code/project-goals.json",
+        contents: JSON.stringify({
+          version: 4,
+          goals: [],
+          tasks: [
+            {
+              id: "task_future",
+              title: "Future task",
+              description: "",
+              status: "planning",
+              scheduledDate: "2099-03-20",
+              subtasks: [],
+              linkedThreadIds: [],
+            },
+            {
+              id: "task_overdue",
+              title: "Overdue task",
+              description: "",
+              status: "planning",
+              scheduledDate: "2020-01-01",
+              subtasks: [],
+              linkedThreadIds: [],
+            },
+          ],
+        }),
+      }),
     });
+
+    const screen = await mountOverview();
+
+    await expect.element(page.getByText(/Scheduled .*2099/)).toBeVisible();
+    await expect.element(page.getByText(/Overdue .*2020/)).toBeVisible();
+
+    await screen.unmount();
+  });
+
+  it("saves and clears a scheduled date from the task editor", async () => {
+    const updateTaskMock = vi.fn(async ({ taskId, scheduledDate }) => ({
+      type: "success" as const,
+      changedId: taskId,
+      snapshot: {
+        revision: scheduledDate === null ? "rev-3" : "rev-2",
+        document: {
+          version: 4 as const,
+          goals: [],
+          tasks: [
+            {
+              id: "task_1",
+              title: "Task",
+              description: "",
+              status: "planning",
+              scheduledDate,
+              subtasks: [],
+              linkedThreadIds: [],
+            },
+          ],
+        },
+      },
+    }));
+    currentNativeApi = buildNativeApi({
+      readFile: vi.fn().mockResolvedValue({
+        relativePath: ".t3code/project-goals.json",
+        contents: JSON.stringify({
+          version: 4,
+          goals: [],
+          tasks: [
+            {
+              id: "task_1",
+              title: "Task",
+              description: "",
+              status: "planning",
+              scheduledDate: null,
+              subtasks: [],
+              linkedThreadIds: [],
+            },
+          ],
+        }),
+      }),
+      updateTask: updateTaskMock,
+    });
+
+    const screen = await mountOverview();
+
+    await page.getByRole("button", { name: "Edit" }).click();
+    await page.getByLabelText("Scheduled Date").fill("2099-03-20");
+    await page.getByRole("button", { name: "Save Task" }).click();
+
+    expect(updateTaskMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: "task_1",
+        scheduledDate: "2099-03-20",
+      }),
+    );
+    await expect.element(page.getByText(/Scheduled .*2099/)).toBeVisible();
+
+    await page.getByRole("button", { name: "Edit" }).click();
+    await page.getByLabelText("Scheduled Date").fill("");
+    await page.getByRole("button", { name: "Save Task" }).click();
+
+    expect(updateTaskMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        taskId: "task_1",
+        scheduledDate: null,
+      }),
+    );
+    await expect.element(page.getByText(/Scheduled .*2099/)).not.toBeInTheDocument();
+
+    await screen.unmount();
+  });
+
+  it("orders dated tasks ahead of undated tasks within the same status column", async () => {
+    currentNativeApi = buildNativeApi({
+      readFile: vi.fn().mockResolvedValue({
+        relativePath: ".t3code/project-goals.json",
+        contents: JSON.stringify({
+          version: 4,
+          goals: [],
+          tasks: [
+            {
+              id: "task_undated",
+              title: "Undated task",
+              description: "",
+              status: "planning",
+              scheduledDate: null,
+              subtasks: [],
+              linkedThreadIds: [],
+            },
+            {
+              id: "task_later",
+              title: "Later task",
+              description: "",
+              status: "planning",
+              scheduledDate: "2099-03-22",
+              subtasks: [],
+              linkedThreadIds: [],
+            },
+            {
+              id: "task_sooner",
+              title: "Sooner task",
+              description: "",
+              status: "planning",
+              scheduledDate: "2099-03-20",
+              subtasks: [],
+              linkedThreadIds: [],
+            },
+          ],
+        }),
+      }),
+    });
+
+    const screen = await mountOverview();
+
+    await expect.element(page.getByText("Sooner task")).toBeVisible();
+    await expect.element(page.getByText("Later task")).toBeVisible();
+    await expect.element(page.getByText("Undated task")).toBeVisible();
+
+    const boardText = screen.container.textContent ?? "";
+    expect(boardText.indexOf("Sooner task")).toBeLessThan(boardText.indexOf("Later task"));
+    expect(boardText.indexOf("Later task")).toBeLessThan(boardText.indexOf("Undated task"));
 
     await screen.unmount();
   });

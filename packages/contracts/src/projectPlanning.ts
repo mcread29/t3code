@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { IsoDateTime, TrimmedNonEmptyString } from "./baseSchemas";
+import { IsoDate, IsoDateTime, TrimmedNonEmptyString } from "./baseSchemas";
 
 export const ProjectGoalStatus = Schema.Literals([
   "working",
@@ -24,6 +24,7 @@ export const ProjectPlanningTask = Schema.Struct({
   title: Schema.String,
   description: Schema.String,
   status: ProjectGoalStatus,
+  scheduledDate: Schema.NullOr(IsoDate),
   subtasks: Schema.Array(ProjectPlanningSubtask),
   linkedThreadIds: Schema.Array(TrimmedNonEmptyString),
 });
@@ -38,7 +39,7 @@ export const ProjectPlanningGoal = Schema.Struct({
 export type ProjectPlanningGoal = typeof ProjectPlanningGoal.Type;
 
 export const ProjectPlanningDocument = Schema.Struct({
-  version: Schema.Literal(3),
+  version: Schema.Literal(4),
   goals: Schema.Array(ProjectPlanningGoal),
   tasks: Schema.Array(ProjectPlanningTask),
 });
@@ -142,6 +143,7 @@ export const ProjectPlanningCreateTaskInput = Schema.Struct({
   title: Schema.String,
   description: Schema.optional(Schema.String),
   status: Schema.optional(ProjectGoalStatus),
+  scheduledDate: Schema.optional(IsoDate),
 });
 export type ProjectPlanningCreateTaskInput = typeof ProjectPlanningCreateTaskInput.Type;
 
@@ -152,6 +154,7 @@ export const ProjectPlanningUpdateTaskInput = Schema.Struct({
   title: Schema.optional(Schema.String),
   description: Schema.optional(Schema.String),
   status: Schema.optional(ProjectGoalStatus),
+  scheduledDate: Schema.optional(Schema.NullOr(IsoDate)),
 });
 export type ProjectPlanningUpdateTaskInput = typeof ProjectPlanningUpdateTaskInput.Type;
 

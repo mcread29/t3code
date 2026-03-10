@@ -371,7 +371,7 @@ describe("wsNativeApi", () => {
       snapshot: {
         revision: "rev-1",
         document: {
-          version: 3,
+          version: 4,
           goals: [],
           tasks: [],
         },
@@ -400,6 +400,50 @@ describe("wsNativeApi", () => {
       2,
       WS_METHODS.projectPlanningDetachThreadFromTask,
       input,
+    );
+  });
+
+  it("forwards task scheduling mutations to project planning websocket methods", async () => {
+    requestMock.mockResolvedValue({
+      type: "success",
+      changedId: "task-1",
+      snapshot: {
+        revision: "rev-1",
+        document: {
+          version: 4,
+          goals: [],
+          tasks: [],
+        },
+      },
+    });
+    const { createWsNativeApi } = await import("./wsNativeApi");
+
+    const api = createWsNativeApi();
+    const createInput = {
+      projectId: ProjectId.makeUnsafe("project-1"),
+      workspaceRoot: "/tmp/project",
+      title: "Scheduled task",
+      scheduledDate: "2026-03-20",
+    } as const;
+    const updateInput = {
+      projectId: ProjectId.makeUnsafe("project-1"),
+      workspaceRoot: "/tmp/project",
+      taskId: "task-1",
+      scheduledDate: null,
+    } as const;
+
+    await api.projectPlanning.createTask(createInput);
+    await api.projectPlanning.updateTask(updateInput);
+
+    expect(requestMock).toHaveBeenNthCalledWith(
+      1,
+      WS_METHODS.projectPlanningCreateTask,
+      createInput,
+    );
+    expect(requestMock).toHaveBeenNthCalledWith(
+      2,
+      WS_METHODS.projectPlanningUpdateTask,
+      updateInput,
     );
   });
 

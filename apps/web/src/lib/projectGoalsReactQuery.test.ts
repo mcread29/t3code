@@ -24,9 +24,19 @@ describe("projectGoalsReactQuery", () => {
           snapshot: {
             revision: "rev-1",
             document: {
-              version: 3,
+              version: 4,
               goals: [],
-              tasks: [],
+              tasks: [
+                {
+                  id: "task-1",
+                  title: "Task",
+                  description: "",
+                  status: "planning",
+                  scheduledDate: "2026-03-20",
+                  subtasks: [],
+                  linkedThreadIds: [],
+                },
+              ],
             },
           },
         }),
@@ -42,9 +52,19 @@ describe("projectGoalsReactQuery", () => {
     );
 
     expect(result.document).toEqual({
-      version: 3,
+      version: 4,
       goals: [],
-      tasks: [],
+      tasks: [
+        {
+          id: "task-1",
+          title: "Task",
+          description: "",
+          status: "planning",
+          scheduledDate: "2026-03-20",
+          subtasks: [],
+          linkedThreadIds: [],
+        },
+      ],
     });
   });
 

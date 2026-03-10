@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { IsoDate } from "@t3tools/contracts";
 
 export const PROJECT_GOALS_FILE_PATH = ".t3code/project-goals.json";
 
@@ -60,6 +61,7 @@ export const ProjectTaskSchema = Schema.Struct({
   title: Schema.String,
   description: Schema.String,
   status: ProjectGoalStatusSchema,
+  scheduledDate: Schema.NullOr(IsoDate),
   subtasks: Schema.Array(ProjectSubtaskSchema),
   linkedThreadIds: Schema.Array(ProjectIdSchema),
 });
@@ -74,7 +76,7 @@ export const ProjectGoalSchema = Schema.Struct({
 export type ProjectGoal = typeof ProjectGoalSchema.Type;
 
 export const ProjectGoalsDocumentSchema = Schema.Struct({
-  version: Schema.Literal(3),
+  version: Schema.Literal(4),
   goals: Schema.Array(ProjectGoalSchema),
   tasks: Schema.Array(ProjectTaskSchema),
 });
@@ -101,9 +103,31 @@ const ProjectGoalsDocumentSchemaV2 = Schema.Struct({
 });
 type ProjectGoalsDocumentV2 = typeof ProjectGoalsDocumentSchemaV2.Type;
 
+const ProjectTaskSchemaV3 = Schema.Struct({
+  id: ProjectIdSchema,
+  title: Schema.String,
+  description: Schema.String,
+  status: ProjectGoalStatusSchema,
+  subtasks: Schema.Array(ProjectSubtaskSchema),
+  linkedThreadIds: Schema.Array(ProjectIdSchema),
+});
+const ProjectGoalSchemaV3 = Schema.Struct({
+  id: ProjectIdSchema,
+  name: Schema.String,
+  status: ProjectGoalStatusSchema,
+  tasks: Schema.Array(ProjectTaskSchemaV3),
+});
+const ProjectGoalsDocumentSchemaV3 = Schema.Struct({
+  version: Schema.Literal(3),
+  goals: Schema.Array(ProjectGoalSchemaV3),
+  tasks: Schema.Array(ProjectTaskSchemaV3),
+});
+type ProjectGoalsDocumentV3 = typeof ProjectGoalsDocumentSchemaV3.Type;
+
 const ProjectGoalsDocumentSchemaAnyVersion = Schema.Union([
   ProjectGoalsDocumentSchemaV1,
   ProjectGoalsDocumentSchemaV2,
+  ProjectGoalsDocumentSchemaV3,
   ProjectGoalsDocumentSchema,
 ]);
 
@@ -145,7 +169,7 @@ function createProjectPlanningId(prefix: "goal" | "task" | "subtask"): string {
 
 export function createEmptyProjectGoalsDocument(): ProjectGoalsDocument {
   return {
-    version: 3,
+    version: 4,
     goals: [],
     tasks: [],
   };
@@ -163,10 +187,19 @@ function compareByStatusAndName(
 }
 
 function compareByStatusAndTitle(
-  left: { status: ProjectGoalStatus; title: string; id: string },
-  right: { status: ProjectGoalStatus; title: string; id: string },
+  left: { status: ProjectGoalStatus; title: string; id: string; scheduledDate: string | null },
+  right: { status: ProjectGoalStatus; title: string; id: string; scheduledDate: string | null },
 ): number {
-  return compareStatuses(left.status, right.status) || left.title.localeCompare(right.title) || left.id.localeCompare(right.id);
+  const leftHasSchedule = left.scheduledDate !== null;
+  const rightHasSchedule = right.scheduledDate !== null;
+
+  return (
+    compareStatuses(left.status, right.status) ||
+    Number(rightHasSchedule) - Number(leftHasSchedule) ||
+    (left.scheduledDate ?? "").localeCompare(right.scheduledDate ?? "") ||
+    left.title.localeCompare(right.title) ||
+    left.id.localeCompare(right.id)
+  );
 }
 
 function migrateSubtask(subtask: typeof ProjectSubtaskSchemaV1.Type): ProjectSubtask {
@@ -183,6 +216,7 @@ function migrateTask(task: typeof ProjectTaskSchemaV1.Type): ProjectTask {
     title: task.title,
     description: task.description,
     status: task.status,
+    scheduledDate: null,
     subtasks: task.subtasks.map(migrateSubtask),
     linkedThreadIds: [],
   };
@@ -199,7 +233,7 @@ function migrateGoal(goal: typeof ProjectGoalSchemaV1.Type): ProjectGoal {
 
 function migrateProjectGoalsDocumentV1(doc: ProjectGoalsDocumentV1): ProjectGoalsDocument {
   return {
-    version: 3,
+    version: 4,
     goals: doc.goals.map(migrateGoal),
     tasks: doc.tasks.map(migrateTask),
   };
@@ -211,6 +245,7 @@ function migrateTaskV2(task: ProjectGoalsDocumentV2["tasks"][number]): ProjectTa
     title: task.title,
     description: task.description,
     status: task.status,
+    scheduledDate: null,
     subtasks: task.subtasks.map(normalizeSubtask),
     linkedThreadIds: [],
   };
@@ -227,9 +262,38 @@ function migrateGoalV2(goal: ProjectGoalsDocumentV2["goals"][number]): ProjectGo
 
 function migrateProjectGoalsDocumentV2(doc: ProjectGoalsDocumentV2): ProjectGoalsDocument {
   return {
-    version: 3,
+    version: 4,
     goals: doc.goals.map(migrateGoalV2),
     tasks: doc.tasks.map(migrateTaskV2),
+  };
+}
+
+function migrateTaskV3(task: ProjectGoalsDocumentV3["tasks"][number]): ProjectTask {
+  return {
+    id: task.id,
+    title: task.title,
+    description: task.description,
+    status: task.status,
+    scheduledDate: null,
+    subtasks: task.subtasks.map(normalizeSubtask),
+    linkedThreadIds: task.linkedThreadIds,
+  };
+}
+
+function migrateGoalV3(goal: ProjectGoalsDocumentV3["goals"][number]): ProjectGoal {
+  return {
+    id: goal.id,
+    name: goal.name,
+    status: goal.status,
+    tasks: goal.tasks.map(migrateTaskV3),
+  };
+}
+
+function migrateProjectGoalsDocumentV3(doc: ProjectGoalsDocumentV3): ProjectGoalsDocument {
+  return {
+    version: 4,
+    goals: doc.goals.map(migrateGoalV3),
+    tasks: doc.tasks.map(migrateTaskV3),
   };
 }
 
@@ -254,6 +318,7 @@ function normalizeTask(task: ProjectTask): ProjectTask {
     title: task.title,
     description: task.description,
     status: task.status,
+    scheduledDate: task.scheduledDate ?? null,
     subtasks: task.subtasks.map(normalizeSubtask),
     linkedThreadIds,
   };
@@ -271,7 +336,7 @@ function normalizeGoal(goal: ProjectGoal): ProjectGoal {
 export function normalizeProjectGoalsDocument(doc: ProjectGoalsDocument): ProjectGoalsDocument {
   const decoded = Schema.decodeUnknownSync(ProjectGoalsDocumentSchema)(doc);
   return {
-    version: 3,
+    version: 4,
     goals: [...decoded.goals].map(normalizeGoal).toSorted(compareByStatusAndName),
     tasks: [...decoded.tasks].map(normalizeTask).toSorted(compareByStatusAndTitle),
   };
@@ -300,6 +365,8 @@ export function parseProjectGoalsDocument(raw: string | null): ProjectGoalsDocum
         ? migrateProjectGoalsDocumentV1(decoded)
         : decoded.version === 2
           ? migrateProjectGoalsDocumentV2(decoded)
+          : decoded.version === 3
+            ? migrateProjectGoalsDocumentV3(decoded)
           : decoded;
     return normalizeProjectGoalsDocument(migrated);
   } catch (error) {
@@ -387,6 +454,7 @@ export function createTask(input?: Partial<ProjectTask>): ProjectTask {
     title: input?.title ?? "",
     description: input?.description ?? "",
     status: input?.status ?? "planning",
+    scheduledDate: input?.scheduledDate ?? null,
     subtasks: input?.subtasks ?? [],
     linkedThreadIds: input?.linkedThreadIds ?? [],
   });

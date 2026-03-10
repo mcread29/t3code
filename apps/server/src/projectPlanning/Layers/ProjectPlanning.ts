@@ -194,7 +194,7 @@ export const ProjectPlanningLive = Layer.effect(
       );
       if (!exists) {
         const document = normalizeProjectGoalsDocument({
-          version: 3,
+          version: 4,
           goals: [],
           tasks: [],
         });
@@ -406,6 +406,7 @@ export const ProjectPlanningLive = Layer.effect(
               title: input.title,
               description: input.description ?? "",
               status: input.status ?? "planning",
+              scheduledDate: input.scheduledDate ?? null,
             });
             const document = input.goalId
               ? addTaskToGoal(state.document, input.goalId, task)
@@ -438,6 +439,7 @@ export const ProjectPlanningLive = Layer.effect(
               ...(input.title !== undefined ? { title: input.title } : {}),
               ...(input.description !== undefined ? { description: input.description } : {}),
               ...(input.status !== undefined ? { status: input.status } : {}),
+              ...(input.scheduledDate !== undefined ? { scheduledDate: input.scheduledDate } : {}),
             }));
             if (!document) {
               return errorResult({
