@@ -2,6 +2,10 @@ import type { ProjectId } from "@t3tools/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {
+  PROJECT_TASK_RECURRENCE_ORDINALS,
+  PROJECT_TASK_RECURRENCE_WEEKDAYS,
+} from "@t3tools/shared/projectTaskRecurrence";
+import {
   ArchiveIcon,
   ArchiveRestoreIcon,
   ChevronDownIcon,
@@ -24,6 +28,9 @@ import {
   type ProjectGoalStatus,
   ProjectGoalsDocumentParseError,
   type ProjectTask,
+  type ProjectTaskRecurrence,
+  type ProjectTaskRecurrenceOrdinal,
+  type ProjectTaskRecurrenceWeekday,
 } from "~/projectGoals";
 import { useStore } from "~/store";
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE } from "~/types";
@@ -58,7 +65,14 @@ import {
   ProjectPlanningRpcError,
   unwrapMutationResult,
 } from "~/lib/projectGoalsReactQuery";
-import { getScheduledTaskLabel, isScheduledTaskOverdue } from "~/lib/taskSchedule";
+import {
+  formatScheduledDate,
+  getLocalIsoDate,
+  getTaskNextOpenOccurrence,
+  getTaskRecurrenceSummary,
+  getTaskScheduleLabel,
+  isTaskOverdue,
+} from "~/lib/taskSchedule";
 import {
   buildTaskKickoffPrompt,
   buildTaskThreadTitle,
@@ -67,6 +81,8 @@ import {
   type LinkedThreadPresentation,
   type TaskThreadCandidate,
 } from "~/lib/taskThreadLinks";
+import type { ProjectCalendarTaskItem } from "~/lib/taskCalendar";
+import ProjectOverviewCalendarView from "./ProjectOverviewCalendarView";
 import TaskKanbanBoard from "./TaskKanbanBoard";
 import type { ProjectOverviewSection } from "./ProjectOverviewLayout";
 import { newThreadId } from "~/lib/utils";
@@ -107,6 +123,279 @@ type TaskThreadDialogTask =
       goalId?: string;
       goalName?: string;
     };
+
+type TaskScheduleMode = "none" | "one-time" | "recurring";
+type TaskRecurrenceRuleKind =
+  | "daily"
+  | "weekly"
+  | "monthly-day"
+  | "monthly-ordinal-weekday"
+  | "yearly-date"
+  | "yearly-ordinal-weekday";
+
+interface TaskRecurrenceDraft {
+  startDate: string;
+  ruleKind: TaskRecurrenceRuleKind;
+  interval: number;
+  weekdays: readonly ProjectTaskRecurrenceWeekday[];
+  dayOfMonth: number;
+  ordinal: ProjectTaskRecurrenceOrdinal;
+  weekday: ProjectTaskRecurrenceWeekday;
+  month: number;
+}
+
+const MONTH_OPTIONS = [
+  { value: 1, label: "January" },
+  { value: 2, label: "February" },
+  { value: 3, label: "March" },
+  { value: 4, label: "April" },
+  { value: 5, label: "May" },
+  { value: 6, label: "June" },
+  { value: 7, label: "July" },
+  { value: 8, label: "August" },
+  { value: 9, label: "September" },
+  { value: 10, label: "October" },
+  { value: 11, label: "November" },
+  { value: 12, label: "December" },
+] as const;
+
+function parseTaskEditorIsoDate(isoDate: string): Date {
+  const [year, month, day] = isoDate.split("-").map((part) => Number.parseInt(part, 10));
+  return new Date(Date.UTC(year ?? 0, (month ?? 1) - 1, day ?? 1));
+}
+
+function taskEditorWeekdayForDate(isoDate: string): ProjectTaskRecurrenceWeekday {
+  return PROJECT_TASK_RECURRENCE_WEEKDAYS[parseTaskEditorIsoDate(isoDate).getUTCDay()]!;
+}
+
+function taskEditorOrdinalForDate(isoDate: string): ProjectTaskRecurrenceOrdinal {
+  const dayOfMonth = parseTaskEditorIsoDate(isoDate).getUTCDate();
+  if (dayOfMonth >= 29) {
+    return "last";
+  }
+  if (dayOfMonth >= 22) {
+    return "fourth";
+  }
+  if (dayOfMonth >= 15) {
+    return "third";
+  }
+  if (dayOfMonth >= 8) {
+    return "second";
+  }
+  return "first";
+}
+
+function taskEditorDayOfMonthForDate(isoDate: string): number {
+  return parseTaskEditorIsoDate(isoDate).getUTCDate();
+}
+
+function taskEditorMonthForDate(isoDate: string): number {
+  return parseTaskEditorIsoDate(isoDate).getUTCMonth() + 1;
+}
+
+function createRecurrenceDraft(startDate: string = getLocalIsoDate()): TaskRecurrenceDraft {
+  return {
+    startDate,
+    ruleKind: "daily",
+    interval: 1,
+    weekdays: [taskEditorWeekdayForDate(startDate)],
+    dayOfMonth: taskEditorDayOfMonthForDate(startDate),
+    ordinal: taskEditorOrdinalForDate(startDate),
+    weekday: taskEditorWeekdayForDate(startDate),
+    month: taskEditorMonthForDate(startDate),
+  };
+}
+
+function syncRecurrenceDraftToStartDate(
+  draft: TaskRecurrenceDraft,
+  startDate: string,
+): TaskRecurrenceDraft {
+  const startWeekday = taskEditorWeekdayForDate(startDate);
+
+  switch (draft.ruleKind) {
+    case "daily":
+      return { ...draft, startDate };
+    case "weekly":
+      return {
+        ...draft,
+        startDate,
+        weekdays: Array.from(new Set([...draft.weekdays, startWeekday])).toSorted(
+          (left, right) =>
+            PROJECT_TASK_RECURRENCE_WEEKDAYS.indexOf(left) -
+            PROJECT_TASK_RECURRENCE_WEEKDAYS.indexOf(right),
+        ),
+      };
+    case "monthly-day":
+      return {
+        ...draft,
+        startDate,
+        dayOfMonth: taskEditorDayOfMonthForDate(startDate),
+      };
+    case "monthly-ordinal-weekday":
+      return {
+        ...draft,
+        startDate,
+        ordinal: taskEditorOrdinalForDate(startDate),
+        weekday: startWeekday,
+      };
+    case "yearly-date":
+      return {
+        ...draft,
+        startDate,
+        month: taskEditorMonthForDate(startDate),
+        dayOfMonth: taskEditorDayOfMonthForDate(startDate),
+      };
+    case "yearly-ordinal-weekday":
+      return {
+        ...draft,
+        startDate,
+        month: taskEditorMonthForDate(startDate),
+        ordinal: taskEditorOrdinalForDate(startDate),
+        weekday: startWeekday,
+      };
+  }
+}
+
+function recurrenceDraftFromTask(recurrence: ProjectTaskRecurrence): TaskRecurrenceDraft {
+  switch (recurrence.rule.kind) {
+    case "daily":
+      return {
+        ...createRecurrenceDraft(recurrence.startDate),
+        startDate: recurrence.startDate,
+        ruleKind: recurrence.rule.kind,
+        interval: recurrence.rule.interval,
+      };
+    case "weekly":
+      return {
+        ...createRecurrenceDraft(recurrence.startDate),
+        startDate: recurrence.startDate,
+        ruleKind: recurrence.rule.kind,
+        interval: recurrence.rule.interval,
+        weekdays: recurrence.rule.weekdays,
+      };
+    case "monthly-day":
+      return {
+        ...createRecurrenceDraft(recurrence.startDate),
+        startDate: recurrence.startDate,
+        ruleKind: recurrence.rule.kind,
+        interval: recurrence.rule.interval,
+        dayOfMonth: recurrence.rule.dayOfMonth,
+      };
+    case "monthly-ordinal-weekday":
+      return {
+        ...createRecurrenceDraft(recurrence.startDate),
+        startDate: recurrence.startDate,
+        ruleKind: recurrence.rule.kind,
+        interval: recurrence.rule.interval,
+        ordinal: recurrence.rule.ordinal,
+        weekday: recurrence.rule.weekday,
+      };
+    case "yearly-date":
+      return {
+        ...createRecurrenceDraft(recurrence.startDate),
+        startDate: recurrence.startDate,
+        ruleKind: recurrence.rule.kind,
+        interval: recurrence.rule.interval,
+        month: recurrence.rule.month,
+        dayOfMonth: recurrence.rule.dayOfMonth,
+      };
+    case "yearly-ordinal-weekday":
+      return {
+        ...createRecurrenceDraft(recurrence.startDate),
+        startDate: recurrence.startDate,
+        ruleKind: recurrence.rule.kind,
+        interval: recurrence.rule.interval,
+        month: recurrence.rule.month,
+        ordinal: recurrence.rule.ordinal,
+        weekday: recurrence.rule.weekday,
+      };
+  }
+}
+
+function buildRecurrenceFromDraft(draft: TaskRecurrenceDraft): ProjectTaskRecurrence {
+  switch (draft.ruleKind) {
+    case "daily":
+      return {
+        startDate: draft.startDate,
+        rule: {
+          kind: "daily",
+          interval: draft.interval,
+        },
+        completionDates: [],
+      };
+    case "weekly":
+      return {
+        startDate: draft.startDate,
+        rule: {
+          kind: "weekly",
+          interval: draft.interval,
+          weekdays: draft.weekdays,
+        },
+        completionDates: [],
+      };
+    case "monthly-day":
+      return {
+        startDate: draft.startDate,
+        rule: {
+          kind: "monthly-day",
+          interval: draft.interval,
+          dayOfMonth: draft.dayOfMonth,
+        },
+        completionDates: [],
+      };
+    case "monthly-ordinal-weekday":
+      return {
+        startDate: draft.startDate,
+        rule: {
+          kind: "monthly-ordinal-weekday",
+          interval: draft.interval,
+          ordinal: draft.ordinal,
+          weekday: draft.weekday,
+        },
+        completionDates: [],
+      };
+    case "yearly-date":
+      return {
+        startDate: draft.startDate,
+        rule: {
+          kind: "yearly-date",
+          interval: draft.interval,
+          month: draft.month,
+          dayOfMonth: draft.dayOfMonth,
+        },
+        completionDates: [],
+      };
+    case "yearly-ordinal-weekday":
+      return {
+        startDate: draft.startDate,
+        rule: {
+          kind: "yearly-ordinal-weekday",
+          interval: draft.interval,
+          month: draft.month,
+          ordinal: draft.ordinal,
+          weekday: draft.weekday,
+        },
+        completionDates: [],
+      };
+  }
+}
+
+function recurrenceRuleLabel(ruleKind: TaskRecurrenceRuleKind): string {
+  switch (ruleKind) {
+    case "daily":
+      return "Daily";
+    case "weekly":
+      return "Weekly";
+    case "monthly-day":
+      return "Monthly by date";
+    case "monthly-ordinal-weekday":
+      return "Monthly by weekday";
+    case "yearly-date":
+      return "Yearly by date";
+    case "yearly-ordinal-weekday":
+      return "Yearly by weekday";
+  }
+}
 
 function standaloneTaskRowKey(taskId: string): string {
   return `standalone:${taskId}`;
@@ -271,13 +560,22 @@ function TaskEditorDialog({
     description: string;
     status: ProjectGoalStatus;
     scheduledDate: string | null;
+    recurrence: ProjectTaskRecurrence | null;
   }) => Promise<void>;
 }) {
   const [title, setTitle] = React.useState("");
   const [description, setDescription] = React.useState("");
   const [status, setStatus] = React.useState<ProjectGoalStatus>("planning");
+  const [scheduleMode, setScheduleMode] = React.useState<TaskScheduleMode>("none");
   const [scheduledDate, setScheduledDate] = React.useState("");
+  const [recurrenceDraft, setRecurrenceDraft] = React.useState<TaskRecurrenceDraft>(
+    createRecurrenceDraft(),
+  );
   const [saving, setSaving] = React.useState(false);
+  const recurringTaskStatus =
+    state?.mode === "edit" && state.task.recurrence !== null && state.task.status === "archived"
+      ? "archived"
+      : "working";
 
   React.useEffect(() => {
     if (!state) return;
@@ -285,24 +583,42 @@ function TaskEditorDialog({
       setTitle(state.task.title);
       setDescription(state.task.description);
       setStatus(state.task.status);
-      setScheduledDate(state.task.scheduledDate ?? "");
+      if (state.task.recurrence) {
+        setScheduleMode("recurring");
+        setScheduledDate("");
+        setRecurrenceDraft(recurrenceDraftFromTask(state.task.recurrence));
+      } else if (state.task.scheduledDate) {
+        setScheduleMode("one-time");
+        setScheduledDate(state.task.scheduledDate);
+        setRecurrenceDraft(createRecurrenceDraft(state.task.scheduledDate));
+      } else {
+        setScheduleMode("none");
+        setScheduledDate("");
+        setRecurrenceDraft(createRecurrenceDraft());
+      }
       return;
     }
     setTitle("");
     setDescription("");
     setStatus("planning");
+    setScheduleMode("none");
     setScheduledDate("");
+    setRecurrenceDraft(createRecurrenceDraft());
   }, [state]);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
     setSaving(true);
     try {
+      const recurrence =
+        scheduleMode === "recurring" ? buildRecurrenceFromDraft(recurrenceDraft) : null;
       await onSubmit({
         title: title.trim(),
         description,
-        status,
-        scheduledDate: scheduledDate.length > 0 ? scheduledDate : null,
+        status: recurrence ? recurringTaskStatus : status,
+        scheduledDate:
+          scheduleMode === "one-time" && scheduledDate.length > 0 ? scheduledDate : null,
+        recurrence,
       });
       onClose();
     } catch {
@@ -317,7 +633,11 @@ function TaskEditorDialog({
       <DialogPopup>
         <DialogHeader>
           <DialogTitle>{state?.mode === "edit" ? "Edit Task" : "New Task"}</DialogTitle>
-          <DialogDescription>Capture the task, notes, and current status.</DialogDescription>
+          <DialogDescription>
+            {scheduleMode === "recurring"
+              ? "Capture the task and recurrence. Recurring tasks stay active until archived."
+              : "Capture the task, notes, and current status."}
+          </DialogDescription>
         </DialogHeader>
         <form onSubmit={submit}>
           <DialogPanel className="space-y-4">
@@ -341,19 +661,282 @@ function TaskEditorDialog({
               />
             </div>
             <div className="space-y-2">
-              <Label>Status</Label>
-              <StatusSelect value={status} onValueChange={setStatus} ariaLabel="Task status" />
+              <Label>Schedule</Label>
+              <Select
+                value={scheduleMode}
+                onValueChange={(next) => {
+                  const nextMode = next as TaskScheduleMode;
+                  setScheduleMode(nextMode);
+                  if (nextMode === "one-time" && scheduledDate.length === 0) {
+                    setScheduledDate(recurrenceDraft.startDate);
+                  }
+                  if (nextMode === "recurring") {
+                    setRecurrenceDraft((current) =>
+                      syncRecurrenceDraftToStartDate(
+                        current,
+                        scheduledDate || current.startDate || getLocalIsoDate(),
+                      ),
+                    );
+                  }
+                }}
+              >
+                <SelectTrigger aria-label="Task schedule mode">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None</SelectItem>
+                  <SelectItem value="one-time">One-time</SelectItem>
+                  <SelectItem value="recurring">Recurring</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="project-task-scheduled-date">Scheduled Date</Label>
-              <Input
-                id="project-task-scheduled-date"
-                nativeInput
-                type="date"
-                value={scheduledDate}
-                onChange={(event) => setScheduledDate(event.currentTarget.value)}
-              />
-            </div>
+            {scheduleMode !== "recurring" ? (
+              <div className="space-y-2">
+                <Label>Status</Label>
+                <StatusSelect value={status} onValueChange={setStatus} ariaLabel="Task status" />
+              </div>
+            ) : null}
+            {scheduleMode === "one-time" ? (
+              <div className="space-y-2">
+                <Label htmlFor="project-task-scheduled-date">Scheduled Date</Label>
+                <Input
+                  id="project-task-scheduled-date"
+                  nativeInput
+                  type="date"
+                  value={scheduledDate}
+                  onChange={(event) => setScheduledDate(event.currentTarget.value)}
+                />
+              </div>
+            ) : null}
+            {scheduleMode === "recurring" ? (
+              <div className="space-y-4 rounded-xl border border-border/80 bg-background/70 p-4">
+                <div className="space-y-2">
+                  <Label htmlFor="project-task-recurring-start-date">Start Date</Label>
+                  <Input
+                    id="project-task-recurring-start-date"
+                    nativeInput
+                    type="date"
+                    value={recurrenceDraft.startDate}
+                    onChange={(event) => {
+                      const nextStartDate = event.currentTarget.value;
+                      setRecurrenceDraft((current) =>
+                        syncRecurrenceDraftToStartDate(current, nextStartDate),
+                      );
+                    }}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Frequency</Label>
+                  <Select
+                    value={recurrenceDraft.ruleKind}
+                    onValueChange={(next) =>
+                      setRecurrenceDraft((current) =>
+                        syncRecurrenceDraftToStartDate(
+                          { ...current, ruleKind: next as TaskRecurrenceRuleKind },
+                          current.startDate,
+                        ),
+                      )
+                    }
+                  >
+                    <SelectTrigger aria-label="Recurring task frequency">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {(
+                        [
+                          "daily",
+                          "weekly",
+                          "monthly-day",
+                          "monthly-ordinal-weekday",
+                          "yearly-date",
+                          "yearly-ordinal-weekday",
+                        ] as const
+                      ).map((ruleKind) => (
+                        <SelectItem key={ruleKind} value={ruleKind}>
+                          {recurrenceRuleLabel(ruleKind)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="project-task-recurring-interval">Interval</Label>
+                  <Input
+                    id="project-task-recurring-interval"
+                    nativeInput
+                    min={1}
+                    type="number"
+                    value={recurrenceDraft.interval}
+                    onChange={(event) => {
+                      const nextInterval = Math.max(1, Number(event.currentTarget.value) || 1);
+                      setRecurrenceDraft((current) => ({
+                        ...current,
+                        interval: nextInterval,
+                      }));
+                    }}
+                  />
+                </div>
+                {recurrenceDraft.ruleKind === "weekly" ? (
+                  <div className="space-y-2">
+                    <Label>Weekdays</Label>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                      {PROJECT_TASK_RECURRENCE_WEEKDAYS.map((weekday) => (
+                        <label
+                          key={weekday}
+                          className="flex items-center gap-2 rounded-lg border border-border/80 px-3 py-2 text-sm"
+                        >
+                          <Checkbox
+                            checked={recurrenceDraft.weekdays.includes(weekday)}
+                            onCheckedChange={(checked) =>
+                              setRecurrenceDraft((current) => ({
+                                ...current,
+                                weekdays: checked
+                                  ? Array.from(new Set([...current.weekdays, weekday])).toSorted(
+                                      (left, right) =>
+                                        PROJECT_TASK_RECURRENCE_WEEKDAYS.indexOf(left) -
+                                        PROJECT_TASK_RECURRENCE_WEEKDAYS.indexOf(right),
+                                    )
+                                  : current.weekdays.filter((entry) => entry !== weekday),
+                              }))
+                            }
+                          />
+                          <span className="capitalize">{weekday.slice(0, 3)}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                {recurrenceDraft.ruleKind === "monthly-day" ||
+                recurrenceDraft.ruleKind === "yearly-date" ? (
+                  <>
+                    {recurrenceDraft.ruleKind === "yearly-date" ? (
+                      <div className="space-y-2">
+                        <Label>Month</Label>
+                        <Select
+                          value={String(recurrenceDraft.month)}
+                          onValueChange={(next) =>
+                            setRecurrenceDraft((current) => ({
+                              ...current,
+                              month: Number(next),
+                            }))
+                          }
+                        >
+                          <SelectTrigger aria-label="Recurring task month">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {MONTH_OPTIONS.map((month) => (
+                              <SelectItem key={month.value} value={String(month.value)}>
+                                {month.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ) : null}
+                    <div className="space-y-2">
+                      <Label htmlFor="project-task-recurring-day-of-month">Day of Month</Label>
+                      <Input
+                        id="project-task-recurring-day-of-month"
+                        nativeInput
+                        min={1}
+                        max={31}
+                        type="number"
+                        value={recurrenceDraft.dayOfMonth}
+                        onChange={(event) => {
+                          const nextDayOfMonth = Math.min(
+                            31,
+                            Math.max(1, Number(event.currentTarget.value) || 1),
+                          );
+                          setRecurrenceDraft((current) => ({
+                            ...current,
+                            dayOfMonth: nextDayOfMonth,
+                          }));
+                        }}
+                      />
+                    </div>
+                  </>
+                ) : null}
+                {recurrenceDraft.ruleKind === "monthly-ordinal-weekday" ||
+                recurrenceDraft.ruleKind === "yearly-ordinal-weekday" ? (
+                  <>
+                    {recurrenceDraft.ruleKind === "yearly-ordinal-weekday" ? (
+                      <div className="space-y-2">
+                        <Label>Month</Label>
+                        <Select
+                          value={String(recurrenceDraft.month)}
+                          onValueChange={(next) =>
+                            setRecurrenceDraft((current) => ({
+                              ...current,
+                              month: Number(next),
+                            }))
+                          }
+                        >
+                          <SelectTrigger aria-label="Recurring ordinal task month">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {MONTH_OPTIONS.map((month) => (
+                              <SelectItem key={month.value} value={String(month.value)}>
+                                {month.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    ) : null}
+                    <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label>Ordinal</Label>
+                        <Select
+                          value={recurrenceDraft.ordinal}
+                          onValueChange={(next) =>
+                            setRecurrenceDraft((current) => ({
+                              ...current,
+                              ordinal: next as ProjectTaskRecurrenceOrdinal,
+                            }))
+                          }
+                        >
+                          <SelectTrigger aria-label="Recurring task ordinal">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {PROJECT_TASK_RECURRENCE_ORDINALS.map((ordinal) => (
+                              <SelectItem key={ordinal} value={ordinal}>
+                                {ordinal}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Weekday</Label>
+                        <Select
+                          value={recurrenceDraft.weekday}
+                          onValueChange={(next) =>
+                            setRecurrenceDraft((current) => ({
+                              ...current,
+                              weekday: next as ProjectTaskRecurrenceWeekday,
+                            }))
+                          }
+                        >
+                          <SelectTrigger aria-label="Recurring task weekday">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {PROJECT_TASK_RECURRENCE_WEEKDAYS.map((weekday) => (
+                              <SelectItem key={weekday} value={weekday}>
+                                {weekday}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
           </DialogPanel>
           <DialogFooter>
             <Button variant="outline" onClick={onClose} type="button">
@@ -479,6 +1062,8 @@ function TaskCard({
   onOpenLinkedThread,
   onStatusChange,
   onStartNewThread,
+  onCompleteOccurrence,
+  onUncompleteOccurrence,
   onCreateSubtask,
   onUnlinkThread,
   onUpdateSubtask,
@@ -495,6 +1080,8 @@ function TaskCard({
   onOpenLinkedThread: (threadId: string) => void;
   onStatusChange: (status: ProjectGoalStatus) => Promise<void>;
   onStartNewThread: () => Promise<void>;
+  onCompleteOccurrence: (occurrenceDate: string) => Promise<void>;
+  onUncompleteOccurrence: (occurrenceDate: string) => Promise<void>;
   onCreateSubtask: (task: string) => Promise<void>;
   onUnlinkThread: (threadId: string) => Promise<void>;
   onUpdateSubtask: (
@@ -508,16 +1095,15 @@ function TaskCard({
   const [editingSubtaskIndex, setEditingSubtaskIndex] = React.useState<number | null>(null);
   const [editingSubtaskText, setEditingSubtaskText] = React.useState("");
   const [pendingStatus, setPendingStatus] = React.useState<ProjectGoalStatus>(task.status);
-  const scheduleLabel = getScheduledTaskLabel({
-    scheduledDate: task.scheduledDate,
-    status: task.status,
-  });
-  const scheduleVariant = isScheduledTaskOverdue({
-    scheduledDate: task.scheduledDate,
-    status: task.status,
-  })
-    ? "warning"
-    : "secondary";
+  const scheduleLabel = getTaskScheduleLabel({ task });
+  const scheduleVariant = isTaskOverdue({ task }) ? "warning" : "secondary";
+  const recurrenceSummary = getTaskRecurrenceSummary(task);
+  const nextOpenOccurrence = getTaskNextOpenOccurrence({ task });
+  const recentCompletionDates =
+    task.recurrence === null
+      ? []
+      : task.recurrence.completionDates.toReversed().slice(0, 5);
+  const showsRecurringStatus = task.recurrence === null || task.status === "archived";
 
   React.useEffect(() => {
     setPendingStatus(task.status);
@@ -554,22 +1140,35 @@ function TaskCard({
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <p className="truncate text-sm font-medium text-foreground">{task.title || "Untitled task"}</p>
-                <StatusBadge status={task.status} />
+                {showsRecurringStatus ? <StatusBadge status={task.status} /> : null}
                 {scheduleLabel ? <Badge variant={scheduleVariant}>{scheduleLabel}</Badge> : null}
+                {recurrenceSummary ? <Badge variant="outline">{recurrenceSummary}</Badge> : null}
                 <Badge variant="outline">{linkedThreads.length} linked</Badge>
               </div>
               <p className="mt-1 text-xs text-muted-foreground">Subtasks {taskProgressLabel(task)}</p>
             </div>
           </CollapsibleTrigger>
           <div className="flex flex-wrap items-center gap-2">
-            <StatusSelect
-              value={pendingStatus}
-              ariaLabel={`Status for ${task.title || "task"}`}
-              onValueChange={async (status) => {
-                setPendingStatus(status);
-                await onStatusChange(status);
-              }}
-            />
+            {task.recurrence === null ? (
+              <StatusSelect
+                value={pendingStatus}
+                ariaLabel={`Status for ${task.title || "task"}`}
+                onValueChange={async (status) => {
+                  setPendingStatus(status);
+                  await onStatusChange(status);
+                }}
+              />
+            ) : (
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={() =>
+                  void onStatusChange(task.status === "archived" ? "working" : "archived")
+                }
+              >
+                {task.status === "archived" ? "Unarchive" : "Archive"}
+              </Button>
+            )}
             <Button size="xs" variant="outline" onClick={() => onOpenChange(true)}>
               {addSubtaskLabel}
             </Button>
@@ -579,6 +1178,15 @@ function TaskCard({
             <Button size="xs" variant="outline" onClick={() => void onStartNewThread()}>
               Start Thread
             </Button>
+            {task.recurrence !== null && nextOpenOccurrence ? (
+              <Button
+                size="xs"
+                variant="outline"
+                onClick={() => void onCompleteOccurrence(nextOpenOccurrence)}
+              >
+                Mark {formatScheduledDate(nextOpenOccurrence)} Complete
+              </Button>
+            ) : null}
             <Button size="xs" variant="outline" onClick={onEdit}>
               <PencilIcon />
               Edit
@@ -593,12 +1201,55 @@ function TaskCard({
           <div className="border-t border-border/80 px-4 py-4">
             <div className="space-y-4">
               <div>
-                {scheduleLabel ? (
+                {scheduleLabel || recurrenceSummary ? (
                   <div className="mb-4 space-y-2">
                     <p className="text-xs font-medium tracking-[0.14em] text-muted-foreground uppercase">
-                      Scheduled
+                      {task.recurrence ? "Recurring" : "Scheduled"}
                     </p>
-                    <Badge variant={scheduleVariant}>{scheduleLabel}</Badge>
+                    <div className="flex flex-wrap gap-2">
+                      {scheduleLabel ? <Badge variant={scheduleVariant}>{scheduleLabel}</Badge> : null}
+                      {recurrenceSummary ? <Badge variant="outline">{recurrenceSummary}</Badge> : null}
+                      {task.recurrence ? (
+                        <Badge variant="outline">
+                          Starts {formatScheduledDate(task.recurrence.startDate)}
+                        </Badge>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
+                {task.recurrence ? (
+                  <div className="mb-4 space-y-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-xs font-medium tracking-[0.14em] text-muted-foreground uppercase">
+                        Completions
+                      </p>
+                      <Badge variant="outline">{task.recurrence.completionDates.length}</Badge>
+                    </div>
+                    {recentCompletionDates.length === 0 ? (
+                      <div className="rounded-lg border border-dashed border-border px-3 py-3 text-sm text-muted-foreground">
+                        No completed occurrences yet.
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        {recentCompletionDates.map((completionDate) => (
+                          <div
+                            key={completionDate}
+                            className="flex items-center justify-between gap-3 rounded-lg border border-border/80 px-3 py-2"
+                          >
+                            <p className="text-sm text-foreground">
+                              {formatScheduledDate(completionDate)}
+                            </p>
+                            <Button
+                              size="xs"
+                              variant="outline"
+                              onClick={() => void onUncompleteOccurrence(completionDate)}
+                            >
+                              Undo
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 ) : null}
                 <div className="mb-4 space-y-2">
@@ -788,6 +1439,7 @@ export default function ProjectOverviewContent({
   highlightedTaskId,
   loadingLabel,
   onGoalEditorOpenChange,
+  onOpenCalendarTask,
   onTaskEditorOpenChange,
   projectId,
   taskEditorOpen,
@@ -799,6 +1451,7 @@ export default function ProjectOverviewContent({
   highlightedTaskId?: string;
   loadingLabel?: string;
   onGoalEditorOpenChange: (open: boolean) => void;
+  onOpenCalendarTask: (task: ProjectCalendarTaskItem) => void;
   onTaskEditorOpenChange: (open: boolean) => void;
   projectId: ProjectId | null;
   taskEditorOpen: boolean;
@@ -822,6 +1475,9 @@ export default function ProjectOverviewContent({
   const [attachThreadDialogTask, setAttachThreadDialogTask] = React.useState<TaskThreadDialogTask | null>(null);
   const [showArchivedStandaloneTasks, setShowArchivedStandaloneTasks] = React.useState(false);
   const [showArchivedGoalTasks, setShowArchivedGoalTasks] = React.useState(false);
+  const [pendingScrollTaskRowKey, setPendingScrollTaskRowKey] = React.useState<string | null>(null);
+  const previousSectionKindRef = React.useRef(activeSection.kind);
+  const taskRowElementsRef = React.useRef<Record<string, HTMLDivElement | null>>({});
 
   const projectGoalsQuery = useQuery(
     projectPlanningSnapshotQueryOptions({
@@ -901,6 +1557,15 @@ export default function ProjectOverviewContent({
     setOpenTaskRows((current) => ({ ...current, [rowKey]: true }));
   }, []);
 
+  const setTaskRowOpen = React.useCallback((rowKey: string, open: boolean, accordion: boolean) => {
+    setOpenTaskRows((current) => {
+      if (accordion) {
+        return open ? { [rowKey]: true } : {};
+      }
+      return { ...current, [rowKey]: open };
+    });
+  }, []);
+
   React.useEffect(() => {
     if (!highlightedTaskId) {
       return;
@@ -909,7 +1574,9 @@ export default function ProjectOverviewContent({
       openTaskRow(standaloneTaskRowKey(highlightedTaskId));
       return;
     }
-    openTaskRow(goalTaskRowKey(activeSection.goalId, highlightedTaskId));
+    if (activeSection.kind === "goal") {
+      openTaskRow(goalTaskRowKey(activeSection.goalId, highlightedTaskId));
+    }
   }, [activeSection, highlightedTaskId, openTaskRow]);
 
   React.useEffect(() => {
@@ -923,6 +1590,31 @@ export default function ProjectOverviewContent({
       setShowArchivedGoalTasks(false);
     }
   }, [selectedGoalHasArchivedTasks]);
+
+  React.useEffect(() => {
+    const previousKind = previousSectionKindRef.current;
+    if (previousKind === "calendar" && activeSection.kind !== "calendar" && !highlightedTaskId) {
+      setOpenTaskRows({});
+    }
+    previousSectionKindRef.current = activeSection.kind;
+  }, [activeSection.kind, highlightedTaskId]);
+
+  React.useEffect(() => {
+    if (!pendingScrollTaskRowKey) {
+      return;
+    }
+
+    const element = taskRowElementsRef.current[pendingScrollTaskRowKey];
+    if (!element) {
+      return;
+    }
+
+    element.scrollIntoView({
+      block: "center",
+      behavior: "smooth",
+    });
+    setPendingScrollTaskRowKey(null);
+  }, [activeSection, pendingScrollTaskRowKey, document]);
 
   const saveGoalEditor = async (input: { name: string; status: ProjectGoalStatus }) => {
     if (!goalEditorState) return;
@@ -952,6 +1644,7 @@ export default function ProjectOverviewContent({
     description: string;
     status: ProjectGoalStatus;
     scheduledDate: string | null;
+    recurrence: ProjectTaskRecurrence | null;
   }) => {
     if (!taskEditorState) return;
 
@@ -963,6 +1656,7 @@ export default function ProjectOverviewContent({
           description: input.description,
           status: input.status,
           ...(input.scheduledDate !== null ? { scheduledDate: input.scheduledDate } : {}),
+          ...(input.recurrence !== null ? { recurrence: input.recurrence } : {}),
         }),
       );
       openTaskRow(standaloneTaskRowKey(result.changedId));
@@ -978,6 +1672,7 @@ export default function ProjectOverviewContent({
           description: input.description,
           status: input.status,
           ...(input.scheduledDate !== null ? { scheduledDate: input.scheduledDate } : {}),
+          ...(input.recurrence !== null ? { recurrence: input.recurrence } : {}),
         }),
       );
       openTaskRow(goalTaskRowKey(taskEditorState.goalId, result.changedId));
@@ -993,6 +1688,7 @@ export default function ProjectOverviewContent({
           description: input.description,
           status: input.status,
           scheduledDate: input.scheduledDate,
+          recurrence: input.recurrence,
         }),
       );
       return;
@@ -1007,10 +1703,37 @@ export default function ProjectOverviewContent({
           description: input.description,
           status: input.status,
           scheduledDate: input.scheduledDate,
+          recurrence: input.recurrence,
         }),
       );
     }
   };
+
+  const completeTaskOccurrence = React.useCallback(
+    async (taskId: string, occurrenceDate: string) => {
+      await runPlanningMutation(() =>
+        api.projectPlanning.completeTaskOccurrence({
+          ...planningTarget,
+          taskId,
+          occurrenceDate,
+        }),
+      );
+    },
+    [api.projectPlanning, planningTarget, runPlanningMutation],
+  );
+
+  const uncompleteTaskOccurrence = React.useCallback(
+    async (taskId: string, occurrenceDate: string) => {
+      await runPlanningMutation(() =>
+        api.projectPlanning.uncompleteTaskOccurrence({
+          ...planningTarget,
+          taskId,
+          occurrenceDate,
+        }),
+      );
+    },
+    [api.projectPlanning, planningTarget, runPlanningMutation],
+  );
 
   const attachThreadToTask = React.useCallback(
     async (taskId: string, threadId: string) => {
@@ -1175,7 +1898,25 @@ export default function ProjectOverviewContent({
     <>
       <div className="flex h-full min-h-0 flex-1 overflow-y-auto px-4 py-4 sm:px-6 sm:py-6">
         <div className="mx-auto w-full max-w-6xl">
-          {activeSection.kind === "standalone-tasks" ? (
+          {activeSection.kind === "calendar" ? (
+            <ProjectOverviewCalendarView
+              document={document}
+              onCompleteOccurrence={(taskId, occurrenceDate) =>
+                completeTaskOccurrence(taskId, occurrenceDate)
+              }
+              onOpenTask={(task) => {
+                setPendingScrollTaskRowKey(
+                  task.goalId
+                    ? goalTaskRowKey(task.goalId, task.taskId)
+                    : standaloneTaskRowKey(task.taskId),
+                );
+                onOpenCalendarTask(task);
+              }}
+              onUncompleteOccurrence={(taskId, occurrenceDate) =>
+                uncompleteTaskOccurrence(taskId, occurrenceDate)
+              }
+            />
+          ) : activeSection.kind === "standalone-tasks" ? (
             <TaskKanbanBoard
               title="Tasks"
               description="Tasks that are not attached to a goal."
@@ -1197,93 +1938,106 @@ export default function ProjectOverviewContent({
                 title: "No visible tasks",
                 description: "Archived tasks are hidden. Turn on Show archived to view them.",
               }}
-              renderTask={(task) => (
-                <TaskCard
+              renderTask={(task, _status, layoutMode) => (
+                <div
                   key={task.id}
-                  linkedThreads={presentLinkedThreads({
-                    linkedThreadIds: task.linkedThreadIds,
-                    threads,
-                    draftThread: projectDraftThread,
-                  })}
-                  task={task}
-                  open={openTaskRows[standaloneTaskRowKey(task.id)] ?? false}
-                  onOpenChange={(open) =>
-                    setOpenTaskRows((current) => ({
-                      ...current,
-                      [standaloneTaskRowKey(task.id)]: open,
-                    }))
-                  }
-                  onAttachExistingThread={() =>
-                    setAttachThreadDialogTask({
-                      taskId: task.id,
-                      task,
-                    })
-                  }
-                  onEdit={() =>
-                    setTaskEditorState({
-                      mode: "edit",
-                      scope: "standalone",
-                      taskId: task.id,
-                      task,
-                    })
-                  }
-                  onOpenLinkedThread={(threadId) => void openLinkedThread(threadId)}
-                  onDelete={async () => {
-                    const confirmed = await api.dialogs.confirm(
-                      `Delete the task "${task.title || "Untitled task"}"?`,
-                    );
-                    if (!confirmed) return;
-                    await runPlanningMutation(() =>
-                      api.projectPlanning.deleteTask({
-                        ...planningTarget,
-                        taskId: task.id,
-                      }),
-                    );
+                  ref={(element) => {
+                    taskRowElementsRef.current[standaloneTaskRowKey(task.id)] = element;
                   }}
-                  onStatusChange={async (status) => {
-                    await runPlanningMutation(() =>
-                      api.projectPlanning.updateTask({
-                        ...planningTarget,
+                >
+                  <TaskCard
+                    linkedThreads={presentLinkedThreads({
+                      linkedThreadIds: task.linkedThreadIds,
+                      threads,
+                      draftThread: projectDraftThread,
+                    })}
+                    task={task}
+                    open={openTaskRows[standaloneTaskRowKey(task.id)] ?? false}
+                    onOpenChange={(open) =>
+                      setTaskRowOpen(
+                        standaloneTaskRowKey(task.id),
+                        open,
+                        layoutMode === "stacked",
+                      )
+                    }
+                    onAttachExistingThread={() =>
+                      setAttachThreadDialogTask({
                         taskId: task.id,
-                        status,
-                      }),
-                    );
-                  }}
-                  onStartNewThread={() =>
-                    startTaskThread({
-                      taskId: task.id,
-                      task,
-                    })
-                  }
-                  onCreateSubtask={(subtaskTask) =>
-                    runPlanningMutation(() =>
-                      api.projectPlanning.createSubtask({
-                        ...planningTarget,
+                        task,
+                      })
+                    }
+                    onEdit={() =>
+                      setTaskEditorState({
+                        mode: "edit",
+                        scope: "standalone",
                         taskId: task.id,
-                        task: subtaskTask,
-                      }),
-                    ).then(() => undefined)
-                  }
-                  onUnlinkThread={(threadId) => detachThreadFromTask(task.id, threadId)}
-                  onUpdateSubtask={(subtaskId, patch) =>
-                    runPlanningMutation(() =>
-                      api.projectPlanning.updateSubtask({
-                        ...planningTarget,
-                        subtaskId,
-                        ...(patch.task !== undefined ? { task: patch.task } : {}),
-                        ...(patch.done !== undefined ? { done: patch.done } : {}),
-                      }),
-                    ).then(() => undefined)
-                  }
-                  onDeleteSubtask={(subtaskId) =>
-                    runPlanningMutation(() =>
-                      api.projectPlanning.deleteSubtask({
-                        ...planningTarget,
-                        subtaskId,
-                      }),
-                    ).then(() => undefined)
-                  }
-                />
+                        task,
+                      })
+                    }
+                    onOpenLinkedThread={(threadId) => void openLinkedThread(threadId)}
+                    onDelete={async () => {
+                      const confirmed = await api.dialogs.confirm(
+                        `Delete the task "${task.title || "Untitled task"}"?`,
+                      );
+                      if (!confirmed) return;
+                      await runPlanningMutation(() =>
+                        api.projectPlanning.deleteTask({
+                          ...planningTarget,
+                          taskId: task.id,
+                        }),
+                      );
+                    }}
+                    onStatusChange={async (status) => {
+                      await runPlanningMutation(() =>
+                        api.projectPlanning.updateTask({
+                          ...planningTarget,
+                          taskId: task.id,
+                          status,
+                        }),
+                      );
+                    }}
+                    onStartNewThread={() =>
+                      startTaskThread({
+                        taskId: task.id,
+                        task,
+                      })
+                    }
+                    onCompleteOccurrence={(occurrenceDate) =>
+                      completeTaskOccurrence(task.id, occurrenceDate)
+                    }
+                    onUncompleteOccurrence={(occurrenceDate) =>
+                      uncompleteTaskOccurrence(task.id, occurrenceDate)
+                    }
+                    onCreateSubtask={(subtaskTask) =>
+                      runPlanningMutation(() =>
+                        api.projectPlanning.createSubtask({
+                          ...planningTarget,
+                          taskId: task.id,
+                          task: subtaskTask,
+                        }),
+                      ).then(() => undefined)
+                    }
+                    onUnlinkThread={(threadId) => detachThreadFromTask(task.id, threadId)}
+                    onUpdateSubtask={(subtaskId, patch) =>
+                      runPlanningMutation(() =>
+                        api.projectPlanning.updateSubtask({
+                          ...planningTarget,
+                          subtaskId,
+                          ...(patch.task !== undefined ? { task: patch.task } : {}),
+                          ...(patch.done !== undefined ? { done: patch.done } : {}),
+                        }),
+                      ).then(() => undefined)
+                    }
+                    onDeleteSubtask={(subtaskId) =>
+                      runPlanningMutation(() =>
+                        api.projectPlanning.deleteSubtask({
+                          ...planningTarget,
+                          subtaskId,
+                        }),
+                      ).then(() => undefined)
+                    }
+                  />
+                </div>
               )}
             />
           ) : selectedGoal ? (
@@ -1399,98 +2153,111 @@ export default function ProjectOverviewContent({
                   title: "No visible tasks for this goal",
                   description: "Archived tasks are hidden. Turn on Show archived to view them.",
                 }}
-                renderTask={(task) => (
-                  <TaskCard
+                renderTask={(task, _status, layoutMode) => (
+                  <div
                     key={task.id}
-                    linkedThreads={presentLinkedThreads({
-                      linkedThreadIds: task.linkedThreadIds,
-                      threads,
-                      draftThread: projectDraftThread,
-                    })}
-                    task={task}
-                    open={openTaskRows[goalTaskRowKey(selectedGoal.id, task.id)] ?? false}
-                    onOpenChange={(open) =>
-                      setOpenTaskRows((current) => ({
-                        ...current,
-                        [goalTaskRowKey(selectedGoal.id, task.id)]: open,
-                      }))
-                    }
-                    onAttachExistingThread={() =>
-                      setAttachThreadDialogTask({
-                        taskId: task.id,
-                        task,
-                        goalId: selectedGoal.id,
-                        goalName: selectedGoal.name,
-                      })
-                    }
-                    onEdit={() =>
-                      setTaskEditorState({
-                        mode: "edit",
-                        scope: "goal",
-                        goalId: selectedGoal.id,
-                        taskId: task.id,
-                        task,
-                      })
-                    }
-                    onOpenLinkedThread={(threadId) => void openLinkedThread(threadId)}
-                    onDelete={async () => {
-                      const confirmed = await api.dialogs.confirm(
-                        `Delete the task "${task.title || "Untitled task"}"?`,
-                      );
-                      if (!confirmed) return;
-                      await runPlanningMutation(() =>
-                        api.projectPlanning.deleteTask({
-                          ...planningTarget,
-                          taskId: task.id,
-                        }),
-                      );
+                    ref={(element) => {
+                      taskRowElementsRef.current[goalTaskRowKey(selectedGoal.id, task.id)] = element;
                     }}
-                    onStatusChange={async (status) => {
-                      await runPlanningMutation(() =>
-                        api.projectPlanning.updateTask({
-                          ...planningTarget,
+                  >
+                    <TaskCard
+                      linkedThreads={presentLinkedThreads({
+                        linkedThreadIds: task.linkedThreadIds,
+                        threads,
+                        draftThread: projectDraftThread,
+                      })}
+                      task={task}
+                      open={openTaskRows[goalTaskRowKey(selectedGoal.id, task.id)] ?? false}
+                      onOpenChange={(open) =>
+                        setTaskRowOpen(
+                          goalTaskRowKey(selectedGoal.id, task.id),
+                          open,
+                          layoutMode === "stacked",
+                        )
+                      }
+                      onAttachExistingThread={() =>
+                        setAttachThreadDialogTask({
                           taskId: task.id,
-                          status,
-                        }),
-                      );
-                    }}
-                    onStartNewThread={() =>
-                      startTaskThread({
-                        taskId: task.id,
-                        task,
-                        goalId: selectedGoal.id,
-                        goalName: selectedGoal.name,
-                      })
-                    }
-                    onCreateSubtask={(subtaskTask) =>
-                      runPlanningMutation(() =>
-                        api.projectPlanning.createSubtask({
-                          ...planningTarget,
+                          task,
+                          goalId: selectedGoal.id,
+                          goalName: selectedGoal.name,
+                        })
+                      }
+                      onEdit={() =>
+                        setTaskEditorState({
+                          mode: "edit",
+                          scope: "goal",
+                          goalId: selectedGoal.id,
                           taskId: task.id,
-                          task: subtaskTask,
-                        }),
-                      ).then(() => undefined)
-                    }
-                    onUnlinkThread={(threadId) => detachThreadFromTask(task.id, threadId)}
-                    onUpdateSubtask={(subtaskId, patch) =>
-                      runPlanningMutation(() =>
-                        api.projectPlanning.updateSubtask({
-                          ...planningTarget,
-                          subtaskId,
-                          ...(patch.task !== undefined ? { task: patch.task } : {}),
-                          ...(patch.done !== undefined ? { done: patch.done } : {}),
-                        }),
-                      ).then(() => undefined)
-                    }
-                    onDeleteSubtask={(subtaskId) =>
-                      runPlanningMutation(() =>
-                        api.projectPlanning.deleteSubtask({
-                          ...planningTarget,
-                          subtaskId,
-                        }),
-                      ).then(() => undefined)
-                    }
-                  />
+                          task,
+                        })
+                      }
+                      onOpenLinkedThread={(threadId) => void openLinkedThread(threadId)}
+                      onDelete={async () => {
+                        const confirmed = await api.dialogs.confirm(
+                          `Delete the task "${task.title || "Untitled task"}"?`,
+                        );
+                        if (!confirmed) return;
+                        await runPlanningMutation(() =>
+                          api.projectPlanning.deleteTask({
+                            ...planningTarget,
+                            taskId: task.id,
+                          }),
+                        );
+                      }}
+                      onStatusChange={async (status) => {
+                        await runPlanningMutation(() =>
+                          api.projectPlanning.updateTask({
+                            ...planningTarget,
+                            taskId: task.id,
+                            status,
+                          }),
+                        );
+                      }}
+                      onStartNewThread={() =>
+                        startTaskThread({
+                          taskId: task.id,
+                          task,
+                          goalId: selectedGoal.id,
+                          goalName: selectedGoal.name,
+                        })
+                      }
+                      onCompleteOccurrence={(occurrenceDate) =>
+                        completeTaskOccurrence(task.id, occurrenceDate)
+                      }
+                      onUncompleteOccurrence={(occurrenceDate) =>
+                        uncompleteTaskOccurrence(task.id, occurrenceDate)
+                      }
+                      onCreateSubtask={(subtaskTask) =>
+                        runPlanningMutation(() =>
+                          api.projectPlanning.createSubtask({
+                            ...planningTarget,
+                            taskId: task.id,
+                            task: subtaskTask,
+                          }),
+                        ).then(() => undefined)
+                      }
+                      onUnlinkThread={(threadId) => detachThreadFromTask(task.id, threadId)}
+                      onUpdateSubtask={(subtaskId, patch) =>
+                        runPlanningMutation(() =>
+                          api.projectPlanning.updateSubtask({
+                            ...planningTarget,
+                            subtaskId,
+                            ...(patch.task !== undefined ? { task: patch.task } : {}),
+                            ...(patch.done !== undefined ? { done: patch.done } : {}),
+                          }),
+                        ).then(() => undefined)
+                      }
+                      onDeleteSubtask={(subtaskId) =>
+                        runPlanningMutation(() =>
+                          api.projectPlanning.deleteSubtask({
+                            ...planningTarget,
+                            subtaskId,
+                          }),
+                        ).then(() => undefined)
+                      }
+                    />
+                  </div>
                 )}
               />
             </div>

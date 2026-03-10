@@ -34,6 +34,7 @@ import { KeybindingRule } from "./keybindings";
 import { ProjectReadFileInput, ProjectSearchEntriesInput, ProjectWriteFileInput } from "./project";
 import {
   ProjectPlanningAttachThreadToTaskInput,
+  ProjectPlanningCompleteTaskOccurrenceInput,
   ProjectPlanningCreateGoalInput,
   ProjectPlanningCreateSubtaskInput,
   ProjectPlanningCreateTaskInput,
@@ -42,6 +43,7 @@ import {
   ProjectPlanningDeleteSubtaskInput,
   ProjectPlanningDeleteTaskInput,
   ProjectPlanningGetSnapshotInput,
+  ProjectPlanningUncompleteTaskOccurrenceInput,
   ProjectPlanningUpdatedPayload,
   ProjectPlanningUpdateGoalInput,
   ProjectPlanningUpdateSubtaskInput,
@@ -66,6 +68,8 @@ export const WS_METHODS = {
   projectPlanningCreateTask: "projectPlanning.createTask",
   projectPlanningUpdateTask: "projectPlanning.updateTask",
   projectPlanningDeleteTask: "projectPlanning.deleteTask",
+  projectPlanningCompleteTaskOccurrence: "projectPlanning.completeTaskOccurrence",
+  projectPlanningUncompleteTaskOccurrence: "projectPlanning.uncompleteTaskOccurrence",
   projectPlanningAttachThreadToTask: "projectPlanning.attachThreadToTask",
   projectPlanningDetachThreadFromTask: "projectPlanning.detachThreadFromTask",
   projectPlanningCreateSubtask: "projectPlanning.createSubtask",
@@ -144,6 +148,14 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(WS_METHODS.projectPlanningCreateTask, ProjectPlanningCreateTaskInput),
   tagRequestBody(WS_METHODS.projectPlanningUpdateTask, ProjectPlanningUpdateTaskInput),
   tagRequestBody(WS_METHODS.projectPlanningDeleteTask, ProjectPlanningDeleteTaskInput),
+  tagRequestBody(
+    WS_METHODS.projectPlanningCompleteTaskOccurrence,
+    ProjectPlanningCompleteTaskOccurrenceInput,
+  ),
+  tagRequestBody(
+    WS_METHODS.projectPlanningUncompleteTaskOccurrence,
+    ProjectPlanningUncompleteTaskOccurrenceInput,
+  ),
   tagRequestBody(WS_METHODS.projectPlanningAttachThreadToTask, ProjectPlanningAttachThreadToTaskInput),
   tagRequestBody(
     WS_METHODS.projectPlanningDetachThreadFromTask,

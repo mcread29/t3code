@@ -16,8 +16,10 @@ import {
   updateTask,
   type ProjectGoalsDocument,
 } from "../projectGoals";
+import { formatScheduledDate, getLocalIsoDate } from "../lib/taskSchedule";
 import { useStore } from "../store";
 import ProjectOverview from "./ProjectOverview";
+import ProjectOverviewLayout from "./project-overview/ProjectOverviewLayout";
 
 const PROJECT_ID = "project-overview-test" as ProjectId;
 const PROJECT_CWD = "/repo/project-overview";
@@ -27,6 +29,16 @@ let currentNativeApi: NativeApi;
 vi.mock("~/nativeApi", () => ({
   ensureNativeApi: () => currentNativeApi,
 }));
+
+function createQueryClient() {
+  return new QueryClient({
+    defaultOptions: {
+      queries: {
+        retry: false,
+      },
+    },
+  });
+}
 
 function buildNativeApi(input: {
   readFile: (input: { cwd: string; relativePath: string }) => Promise<{
@@ -46,6 +58,17 @@ function buildNativeApi(input: {
     description?: string;
     status?: string;
     scheduledDate?: string;
+    recurrence?: {
+      startDate: string;
+      rule:
+        | { kind: "daily"; interval: number }
+        | { kind: "weekly"; interval: number; weekdays: readonly string[] }
+        | { kind: "monthly-day"; interval: number; dayOfMonth: number }
+        | { kind: "monthly-ordinal-weekday"; interval: number; ordinal: string; weekday: string }
+        | { kind: "yearly-date"; interval: number; month: number; dayOfMonth: number }
+        | { kind: "yearly-ordinal-weekday"; interval: number; month: number; ordinal: string; weekday: string };
+      completionDates: readonly string[];
+    } | null;
   }) => Promise<unknown>;
   updateTask?: (input: {
     taskId: string;
@@ -53,7 +76,20 @@ function buildNativeApi(input: {
     description?: string;
     status?: string;
     scheduledDate?: string | null;
+    recurrence?: {
+      startDate: string;
+      rule:
+        | { kind: "daily"; interval: number }
+        | { kind: "weekly"; interval: number; weekdays: readonly string[] }
+        | { kind: "monthly-day"; interval: number; dayOfMonth: number }
+        | { kind: "monthly-ordinal-weekday"; interval: number; ordinal: string; weekday: string }
+        | { kind: "yearly-date"; interval: number; month: number; dayOfMonth: number }
+        | { kind: "yearly-ordinal-weekday"; interval: number; month: number; ordinal: string; weekday: string };
+      completionDates: readonly string[];
+    } | null;
   }) => Promise<unknown>;
+  completeTaskOccurrence?: (input: { taskId: string; occurrenceDate: string }) => Promise<unknown>;
+  uncompleteTaskOccurrence?: (input: { taskId: string; occurrenceDate: string }) => Promise<unknown>;
 }): NativeApi {
   let document: ProjectGoalsDocument | null = null;
   let revision = 1;
@@ -91,12 +127,13 @@ function buildNativeApi(input: {
 
   const createTaskMock =
     input.createTask ??
-    vi.fn(async ({ goalId, title, description, status, scheduledDate }) => {
+    vi.fn(async ({ goalId, title, description, status, scheduledDate, recurrence }) => {
       const nextTask = createTask({
         title,
         description: description ?? "",
         status: status ?? "planning",
         scheduledDate: scheduledDate ?? null,
+        recurrence: recurrence ?? null,
       });
       document = goalId
         ? (addTaskToGoal(await ensureDocument(), goalId, nextTask) ?? (await ensureDocument()))
@@ -111,7 +148,7 @@ function buildNativeApi(input: {
 
   const updateTaskMock =
     input.updateTask ??
-    vi.fn(async ({ taskId, title, description, status, scheduledDate }) => {
+    vi.fn(async ({ taskId, title, description, status, scheduledDate, recurrence }) => {
       document =
         updateTask(await ensureDocument(), taskId, (task) => ({
           ...task,
@@ -119,6 +156,51 @@ function buildNativeApi(input: {
           ...(description !== undefined ? { description } : {}),
           ...(status !== undefined ? { status } : {}),
           ...(scheduledDate !== undefined ? { scheduledDate } : {}),
+          ...(recurrence !== undefined ? { recurrence } : {}),
+        })) ?? (await ensureDocument());
+      revision += 1;
+      return {
+        type: "success" as const,
+        changedId: taskId,
+        snapshot: await buildSnapshot(),
+      };
+    });
+
+  const completeTaskOccurrenceMock =
+    input.completeTaskOccurrence ??
+    vi.fn(async ({ taskId, occurrenceDate }) => {
+      document =
+        updateTask(await ensureDocument(), taskId, (task) => ({
+          ...task,
+          recurrence: task.recurrence
+            ? {
+                ...task.recurrence,
+                completionDates: [...task.recurrence.completionDates, occurrenceDate],
+              }
+            : null,
+        })) ?? (await ensureDocument());
+      revision += 1;
+      return {
+        type: "success" as const,
+        changedId: taskId,
+        snapshot: await buildSnapshot(),
+      };
+    });
+
+  const uncompleteTaskOccurrenceMock =
+    input.uncompleteTaskOccurrence ??
+    vi.fn(async ({ taskId, occurrenceDate }) => {
+      document =
+        updateTask(await ensureDocument(), taskId, (task) => ({
+          ...task,
+          recurrence: task.recurrence
+            ? {
+                ...task.recurrence,
+                completionDates: task.recurrence.completionDates.filter(
+                  (entry) => entry !== occurrenceDate,
+                ),
+              }
+            : null,
         })) ?? (await ensureDocument());
       revision += 1;
       return {
@@ -147,6 +229,8 @@ function buildNativeApi(input: {
       createTask: createTaskMock,
       updateTask: updateTaskMock,
       deleteTask: vi.fn(),
+      completeTaskOccurrence: completeTaskOccurrenceMock,
+      uncompleteTaskOccurrence: uncompleteTaskOccurrenceMock,
       attachThreadToTask: vi.fn(),
       detachThreadFromTask: vi.fn(),
       createSubtask: vi.fn(),
@@ -158,17 +242,30 @@ function buildNativeApi(input: {
 }
 
 async function mountOverview() {
-  const queryClient = new QueryClient({
-    defaultOptions: {
-      queries: {
-        retry: false,
-      },
-    },
-  });
+  const queryClient = createQueryClient();
 
   return render(
     <QueryClientProvider client={queryClient}>
       <ProjectOverview projectId={PROJECT_ID} />
+    </QueryClientProvider>,
+  );
+}
+
+async function mountHomeOverviewLayout() {
+  const queryClient = createQueryClient();
+
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <ProjectOverviewLayout
+        loadingLabel="Loading home goals..."
+        navigationLabel="Home navigation"
+        projectId={null}
+        showCalendarEntry
+        subtitle={PROJECT_CWD}
+        threadProjectId={PROJECT_ID}
+        title="Home"
+        workspaceRoot={PROJECT_CWD}
+      />
     </QueryClientProvider>,
   );
 }
@@ -205,6 +302,7 @@ afterEach(() => {
     threads: [],
     threadsHydrated: false,
   });
+  vi.useRealTimers();
   vi.clearAllMocks();
 });
 
@@ -258,7 +356,13 @@ describe("ProjectOverview", () => {
     });
 
     const screen = await mountOverview();
+    const desktopNav = screen.container.querySelector("aside");
+    const navButtonLabels = Array.from(
+      desktopNav?.querySelectorAll("button[aria-label]") ?? [],
+    ).map((button) => button.getAttribute("aria-label"));
 
+    expect(navButtonLabels.slice(0, 2)).toEqual(["Calendar", "Tasks"]);
+    await expect.element(page.getByRole("button", { name: "Calendar" })).toBeVisible();
     await expect.element(page.getByRole("button", { name: "Tasks" })).toHaveAttribute(
       "data-active",
       "true",
@@ -266,6 +370,71 @@ describe("ProjectOverview", () => {
     await expect.element(page.getByRole("button", { name: "Launch beta" })).toBeVisible();
     await expect.element(page.getByRole("button", { name: "Stabilize editor" })).toBeVisible();
     await expect.element(page.getByText("Sweep dead code")).toBeVisible();
+
+    await screen.unmount();
+  });
+
+  it("switches to the calendar view and renders the current month grid", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-10T12:00:00Z"));
+    currentNativeApi = buildNativeApi({
+      readFile: vi.fn().mockResolvedValue({
+        relativePath: ".t3code/project-goals.json",
+        contents: JSON.stringify({
+          version: 4,
+          goals: [
+            {
+              id: "goal_1",
+              name: "Launch beta",
+              status: "working",
+              tasks: [
+                {
+                  id: "task_goal",
+                  title: "Beta rehearsal",
+                  description: "",
+                  status: "scheduled",
+                  scheduledDate: "2026-03-22",
+                  subtasks: [],
+                  linkedThreadIds: [],
+                },
+              ],
+            },
+          ],
+          tasks: [
+            {
+              id: "task_1",
+              title: "Sweep dead code",
+              description: "",
+              status: "planning",
+              scheduledDate: "2026-03-20",
+              subtasks: [],
+              linkedThreadIds: [],
+            },
+          ],
+        }),
+      }),
+    });
+
+    const screen = await mountOverview();
+
+    await page.getByRole("button", { name: "Calendar" }).click();
+
+    await expect.element(page.getByTestId("project-calendar-view")).toBeVisible();
+    await expect.element(page.getByRole("heading", { name: "March 2026" })).toBeVisible();
+    await expect.element(page.getByTestId("calendar-day-2026-03-01")).toHaveAttribute(
+      "data-current-month",
+      "true",
+    );
+    await expect.element(page.getByTestId("calendar-day-2026-04-04")).toHaveAttribute(
+      "data-current-month",
+      "false",
+    );
+    expect(
+      screen.container.querySelector('[data-testid="calendar-day-2026-03-20"]')?.textContent,
+    ).toContain("Sweep dead code");
+    expect(
+      screen.container.querySelector('[data-testid="calendar-day-2026-03-22"]')?.textContent,
+    ).toContain("Beta rehearsal");
 
     await screen.unmount();
   });
@@ -347,13 +516,13 @@ describe("ProjectOverview", () => {
 
     const sidebarToggle = page.getByRole("button", { name: "Toggle Sidebar" }).first();
 
-    await expect.element(page.getByRole("button", { name: "Tasks" })).toBeVisible();
+    await expect.element(page.getByLabelText("Tasks", { exact: true })).toBeVisible();
     await expect.element(taskBoard()).toHaveAttribute("data-layout", "columns");
     await sidebarToggle.click();
     await expect.element(page.getByText("Sweep dead code")).toBeVisible();
     await expect.element(taskBoard()).toBeVisible();
     await sidebarToggle.click();
-    await expect.element(page.getByRole("button", { name: "Tasks" })).toBeVisible();
+    await expect.element(page.getByLabelText("Tasks", { exact: true })).toBeVisible();
     await expect.element(taskBoard()).toHaveAttribute("data-layout", "columns");
 
     await screen.unmount();
@@ -551,6 +720,52 @@ describe("ProjectOverview", () => {
     await screen.unmount();
   });
 
+  it("auto-collapses task details in stacked task boards", async () => {
+    await page.viewport(900, 1000);
+    currentNativeApi = buildNativeApi({
+      readFile: vi.fn().mockResolvedValue({
+        relativePath: ".t3code/project-goals.json",
+        contents: JSON.stringify({
+          version: 4,
+          goals: [],
+          tasks: [
+            {
+              id: "task_1",
+              title: "Plan rollout",
+              description: "First description",
+              status: "planning",
+              scheduledDate: null,
+              subtasks: [],
+              linkedThreadIds: [],
+            },
+            {
+              id: "task_2",
+              title: "Ship patch",
+              description: "Second description",
+              status: "working",
+              scheduledDate: null,
+              subtasks: [],
+              linkedThreadIds: [],
+            },
+          ],
+        }),
+      }),
+    });
+
+    const screen = await mountOverview();
+
+    await expect.element(taskBoard()).toHaveAttribute("data-layout", "stacked");
+
+    await page.getByRole("button", { name: /Plan rollout/ }).click();
+    await expect.element(page.getByText("First description")).toBeVisible();
+
+    await page.getByRole("button", { name: /Ship patch/ }).click();
+    await expect.element(page.getByText("Second description")).toBeVisible();
+    await expect.element(page.getByText("First description")).not.toBeInTheDocument();
+
+    await screen.unmount();
+  });
+
   it("recomputes the task board layout when archived visibility adds another category", async () => {
     currentNativeApi = buildNativeApi({
       readFile: vi.fn().mockResolvedValue({
@@ -622,7 +837,7 @@ describe("ProjectOverview", () => {
     await expect.element(page.getByRole("dialog")).toBeVisible();
     await expect.element(page.getByRole("heading", { name: "New Task" })).toBeVisible();
     await expect.element(page.getByLabelText("Title")).toBeVisible();
-    await expect.element(page.getByLabelText("Scheduled Date")).toBeVisible();
+    await expect.element(page.getByLabelText("Task schedule mode")).toBeVisible();
 
     await screen.unmount();
   });
@@ -717,7 +932,7 @@ describe("ProjectOverview", () => {
       snapshot: {
         revision: scheduledDate === null ? "rev-3" : "rev-2",
         document: {
-          version: 4 as const,
+          version: 5 as const,
           goals: [],
           tasks: [
             {
@@ -726,6 +941,7 @@ describe("ProjectOverview", () => {
               description: "",
               status: "planning",
               scheduledDate,
+              recurrence: null,
               subtasks: [],
               linkedThreadIds: [],
             },
@@ -758,6 +974,8 @@ describe("ProjectOverview", () => {
     const screen = await mountOverview();
 
     await page.getByRole("button", { name: "Edit" }).click();
+    await page.getByLabelText("Task schedule mode").click();
+    await page.getByRole("option", { name: "One-time" }).click();
     await page.getByLabelText("Scheduled Date").fill("2099-03-20");
     await page.getByRole("button", { name: "Save Task" }).click();
 
@@ -770,6 +988,8 @@ describe("ProjectOverview", () => {
     await expect.element(page.getByText(/Scheduled .*2099/)).toBeVisible();
 
     await page.getByRole("button", { name: "Edit" }).click();
+    await page.getByLabelText("Task schedule mode").click();
+    await page.getByRole("option", { name: "One-time" }).click();
     await page.getByLabelText("Scheduled Date").fill("");
     await page.getByRole("button", { name: "Save Task" }).click();
 
@@ -780,6 +1000,300 @@ describe("ProjectOverview", () => {
       }),
     );
     await expect.element(page.getByText(/Scheduled .*2099/)).not.toBeInTheDocument();
+
+    await screen.unmount();
+  });
+
+  it("saves a recurring task without showing a status field", async () => {
+    const createTaskMock = vi.fn(async ({ title, description, status, recurrence }) => ({
+      type: "success" as const,
+      changedId: "task_recurring",
+      snapshot: {
+        revision: "rev-2",
+        document: {
+          version: 5 as const,
+          goals: [],
+          tasks: [
+            {
+              id: "task_recurring",
+              title,
+              description: description ?? "",
+              status: status ?? "working",
+              scheduledDate: null,
+              recurrence: recurrence ?? null,
+              subtasks: [],
+              linkedThreadIds: [],
+            },
+          ],
+        },
+      },
+    }));
+    currentNativeApi = buildNativeApi({
+      readFile: vi.fn().mockResolvedValue({
+        relativePath: ".t3code/project-goals.json",
+        contents: JSON.stringify({
+          version: 5,
+          goals: [],
+          tasks: [],
+        }),
+      }),
+      createTask: createTaskMock,
+    });
+
+    const screen = await mountOverview();
+
+    await page.getByRole("button", { name: "New Task" }).click();
+    await page.getByLabelText("Title").fill("Back up database");
+    await page.getByLabelText("Task schedule mode").click();
+    await page.getByRole("option", { name: "Recurring" }).click();
+    await expect.element(page.getByLabelText("Task status")).not.toBeInTheDocument();
+    await page.getByLabelText("Start Date").fill("2026-03-10");
+    await page.getByRole("button", { name: "Create Task" }).click();
+
+    expect(createTaskMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Back up database",
+        status: "working",
+        recurrence: expect.objectContaining({
+          startDate: "2026-03-10",
+        }),
+      }),
+    );
+    await expect.element(page.getByText("Back up database")).toBeVisible();
+
+    await screen.unmount();
+  });
+
+  it("opens a standalone calendar task in the tasks board", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-10T12:00:00Z"));
+    currentNativeApi = buildNativeApi({
+      readFile: vi.fn().mockResolvedValue({
+        relativePath: ".t3code/project-goals.json",
+        contents: JSON.stringify({
+          version: 4,
+          goals: [],
+          tasks: [
+            {
+              id: "task_1",
+              title: "Sweep dead code",
+              description: "",
+              status: "planning",
+              scheduledDate: "2026-03-20",
+              subtasks: [],
+              linkedThreadIds: [],
+            },
+          ],
+        }),
+      }),
+    });
+
+    const screen = await mountOverview();
+
+    await page.getByRole("button", { name: "Calendar" }).click();
+    await page.getByRole("button", { name: "Sweep dead code" }).click();
+
+    await expect.element(page.getByLabelText("Tasks", { exact: true })).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+    await expect.element(page.getByTestId("project-calendar-view")).not.toBeInTheDocument();
+    await expect.element(page.getByText("Sweep dead code")).toBeVisible();
+    await expect.element(page.getByText("No description yet.")).not.toBeInTheDocument();
+
+    await screen.unmount();
+  });
+
+  it("toggles a recurring calendar occurrence without leaving the calendar", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-10T12:00:00Z"));
+    const completeTaskOccurrenceMock = vi.fn(async ({ taskId, occurrenceDate }) => ({
+      type: "success" as const,
+      changedId: taskId,
+      snapshot: {
+        revision: "rev-2",
+        document: {
+          version: 5 as const,
+          goals: [],
+          tasks: [
+            {
+              id: "task_recurring",
+              title: "Backup database",
+              description: "",
+              status: "working",
+              scheduledDate: null,
+              recurrence: {
+                startDate: "2026-03-10",
+                rule: {
+                  kind: "weekly" as const,
+                  interval: 1,
+                  weekdays: ["tuesday"] as const,
+                },
+                completionDates: [occurrenceDate],
+              },
+              subtasks: [],
+              linkedThreadIds: [],
+            },
+          ],
+        },
+      },
+    }));
+    currentNativeApi = buildNativeApi({
+      readFile: vi.fn().mockResolvedValue({
+        relativePath: ".t3code/project-goals.json",
+        contents: JSON.stringify({
+          version: 5,
+          goals: [],
+          tasks: [
+            {
+              id: "task_recurring",
+              title: "Backup database",
+              description: "",
+              status: "working",
+              scheduledDate: null,
+              recurrence: {
+                startDate: "2026-03-10",
+                rule: {
+                  kind: "weekly",
+                  interval: 1,
+                  weekdays: ["tuesday"],
+                },
+                completionDates: [],
+              },
+              subtasks: [],
+              linkedThreadIds: [],
+            },
+          ],
+        }),
+      }),
+      completeTaskOccurrence: completeTaskOccurrenceMock,
+    });
+
+    const screen = await mountOverview();
+
+    await page.getByRole("button", { name: "Calendar" }).click();
+
+    const checkbox = page.getByRole("checkbox", {
+      name: "Mark Backup database on 2026-03-10 complete",
+    });
+    await expect.element(checkbox).toBeVisible();
+    await expect.element(checkbox).not.toBeChecked();
+    await checkbox.click();
+    await expect.element(page.getByTestId("project-calendar-view")).toBeVisible();
+    await expect.element(page.getByLabelText("Tasks", { exact: true })).not.toHaveAttribute(
+      "data-active",
+      "true",
+    );
+    expect(completeTaskOccurrenceMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        occurrenceDate: "2026-03-10",
+        taskId: "task_recurring",
+      }),
+    );
+
+    await screen.unmount();
+  });
+
+  it("marks a recurring occurrence complete and advances the next due date", async () => {
+    const today = new Date();
+    const todayIso = getLocalIsoDate(today);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    const tomorrowIso = getLocalIsoDate(tomorrow);
+    currentNativeApi = buildNativeApi({
+      readFile: vi.fn().mockResolvedValue({
+        relativePath: ".t3code/project-goals.json",
+        contents: JSON.stringify({
+          version: 5,
+          goals: [],
+          tasks: [
+            {
+              id: "task_recurring",
+              title: "Backup database",
+              description: "",
+              status: "working",
+              scheduledDate: null,
+              recurrence: {
+                startDate: todayIso,
+                rule: {
+                  kind: "daily",
+                  interval: 1,
+                },
+                completionDates: [],
+              },
+              subtasks: [],
+              linkedThreadIds: [],
+            },
+          ],
+        }),
+      }),
+    });
+
+    const screen = await mountOverview();
+
+    await expect
+      .element(
+        page.getByRole("button", {
+          name: `Mark ${formatScheduledDate(todayIso)} Complete`,
+        }),
+      )
+      .toBeVisible();
+    await expect.element(page.getByText("Every day")).toBeVisible();
+    await page
+      .getByRole("button", {
+        name: `Mark ${formatScheduledDate(todayIso)} Complete`,
+      })
+      .click();
+    await expect.element(page.getByText(`Next ${formatScheduledDate(tomorrowIso)}`)).toBeVisible();
+    await page.getByRole("button", { name: /Backup database/ }).click();
+    await expect.element(page.getByRole("button", { name: "Undo" })).toBeVisible();
+
+    await screen.unmount();
+  });
+
+  it("opens a goal calendar task in the goal board", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-03-10T12:00:00Z"));
+    currentNativeApi = buildNativeApi({
+      readFile: vi.fn().mockResolvedValue({
+        relativePath: ".t3code/project-goals.json",
+        contents: JSON.stringify({
+          version: 4,
+          goals: [
+            {
+              id: "goal_1",
+              name: "Launch beta",
+              status: "working",
+              tasks: [
+                {
+                  id: "task_goal",
+                  title: "Beta rehearsal",
+                  description: "",
+                  status: "scheduled",
+                  scheduledDate: "2026-03-22",
+                  subtasks: [],
+                  linkedThreadIds: [],
+                },
+              ],
+            },
+          ],
+          tasks: [],
+        }),
+      }),
+    });
+
+    const screen = await mountOverview();
+
+    await page.getByRole("button", { name: "Calendar" }).click();
+    await page.getByRole("button", { name: "Beta rehearsal Launch beta" }).click();
+
+    await expect.element(page.getByRole("button", { name: "Launch beta" })).toHaveAttribute(
+      "data-active",
+      "true",
+    );
+    await expect.element(page.getByTestId("project-calendar-view")).not.toBeInTheDocument();
+    await expect.element(page.getByText("Beta rehearsal")).toBeVisible();
+    await expect.element(page.getByText("No description yet.")).not.toBeInTheDocument();
 
     await screen.unmount();
   });
@@ -866,10 +1380,27 @@ describe("ProjectOverview", () => {
     const screen = await mountOverview();
 
     await page.getByRole("button", { name: "Toggle Sidebar" }).click();
+    await expect.element(page.getByRole("button", { name: "Calendar" })).toBeVisible();
     await expect.element(page.getByRole("button", { name: "Tasks" })).toBeVisible();
     await expect.element(page.getByRole("button", { name: "Launch beta" })).toBeVisible();
     await page.getByRole("button", { name: "Launch beta" }).click();
     await expect.element(page.getByText("Sweep dead code")).not.toBeInTheDocument();
+
+    await screen.unmount();
+  });
+
+  it("shows the calendar entry in the home overview layout", async () => {
+    currentNativeApi = buildNativeApi({
+      readFile: vi.fn().mockResolvedValue({
+        relativePath: ".t3code/project-goals.json",
+        contents: null,
+      }),
+    });
+
+    const screen = await mountHomeOverviewLayout();
+
+    await expect.element(page.getByRole("button", { name: "Calendar" })).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Tasks" })).toBeVisible();
 
     await screen.unmount();
   });

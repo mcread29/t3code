@@ -1,5 +1,11 @@
 import { Schema } from "effect";
-import { IsoDate } from "@t3tools/contracts";
+import { IsoDate, PositiveInt } from "@t3tools/contracts";
+
+import {
+  PROJECT_TASK_RECURRENCE_ORDINALS,
+  PROJECT_TASK_RECURRENCE_WEEKDAYS,
+  normalizeProjectTaskRecurrence,
+} from "./projectTaskRecurrence";
 
 export const PROJECT_GOALS_FILE_PATH = ".t3code/project-goals.json";
 
@@ -56,12 +62,71 @@ export const ProjectSubtaskSchema = Schema.Struct({
 });
 export type ProjectSubtask = typeof ProjectSubtaskSchema.Type;
 
+export const ProjectTaskRecurrenceWeekdaySchema = Schema.Literals(
+  PROJECT_TASK_RECURRENCE_WEEKDAYS,
+);
+export type ProjectTaskRecurrenceWeekday =
+  typeof ProjectTaskRecurrenceWeekdaySchema.Type;
+
+export const ProjectTaskRecurrenceOrdinalSchema = Schema.Literals(
+  PROJECT_TASK_RECURRENCE_ORDINALS,
+);
+export type ProjectTaskRecurrenceOrdinal =
+  typeof ProjectTaskRecurrenceOrdinalSchema.Type;
+
+export const ProjectTaskRecurrenceRuleSchema = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("daily"),
+    interval: PositiveInt,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("weekly"),
+    interval: PositiveInt,
+    weekdays: Schema.Array(ProjectTaskRecurrenceWeekdaySchema),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("monthly-day"),
+    interval: PositiveInt,
+    dayOfMonth: PositiveInt,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("monthly-ordinal-weekday"),
+    interval: PositiveInt,
+    ordinal: ProjectTaskRecurrenceOrdinalSchema,
+    weekday: ProjectTaskRecurrenceWeekdaySchema,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("yearly-date"),
+    interval: PositiveInt,
+    month: PositiveInt,
+    dayOfMonth: PositiveInt,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("yearly-ordinal-weekday"),
+    interval: PositiveInt,
+    month: PositiveInt,
+    ordinal: ProjectTaskRecurrenceOrdinalSchema,
+    weekday: ProjectTaskRecurrenceWeekdaySchema,
+  }),
+]);
+export type ProjectTaskRecurrenceRule = typeof ProjectTaskRecurrenceRuleSchema.Type;
+
+export const ProjectTaskRecurrenceSchema = Schema.Struct({
+  startDate: IsoDate,
+  rule: ProjectTaskRecurrenceRuleSchema,
+  completionDates: Schema.Array(IsoDate),
+});
+export type ProjectTaskRecurrenceValue = typeof ProjectTaskRecurrenceSchema.Type;
+
 export const ProjectTaskSchema = Schema.Struct({
   id: ProjectIdSchema,
   title: Schema.String,
   description: Schema.String,
   status: ProjectGoalStatusSchema,
   scheduledDate: Schema.NullOr(IsoDate),
+  recurrence: Schema.NullOr(ProjectTaskRecurrenceSchema).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
   subtasks: Schema.Array(ProjectSubtaskSchema),
   linkedThreadIds: Schema.Array(ProjectIdSchema),
 });
@@ -76,7 +141,7 @@ export const ProjectGoalSchema = Schema.Struct({
 export type ProjectGoal = typeof ProjectGoalSchema.Type;
 
 export const ProjectGoalsDocumentSchema = Schema.Struct({
-  version: Schema.Literal(4),
+  version: Schema.Literal(5),
   goals: Schema.Array(ProjectGoalSchema),
   tasks: Schema.Array(ProjectTaskSchema),
 });
@@ -124,10 +189,33 @@ const ProjectGoalsDocumentSchemaV3 = Schema.Struct({
 });
 type ProjectGoalsDocumentV3 = typeof ProjectGoalsDocumentSchemaV3.Type;
 
+const ProjectTaskSchemaV4 = Schema.Struct({
+  id: ProjectIdSchema,
+  title: Schema.String,
+  description: Schema.String,
+  status: ProjectGoalStatusSchema,
+  scheduledDate: Schema.NullOr(IsoDate),
+  subtasks: Schema.Array(ProjectSubtaskSchema),
+  linkedThreadIds: Schema.Array(ProjectIdSchema),
+});
+const ProjectGoalSchemaV4 = Schema.Struct({
+  id: ProjectIdSchema,
+  name: Schema.String,
+  status: ProjectGoalStatusSchema,
+  tasks: Schema.Array(ProjectTaskSchemaV4),
+});
+const ProjectGoalsDocumentSchemaV4 = Schema.Struct({
+  version: Schema.Literal(4),
+  goals: Schema.Array(ProjectGoalSchemaV4),
+  tasks: Schema.Array(ProjectTaskSchemaV4),
+});
+type ProjectGoalsDocumentV4 = typeof ProjectGoalsDocumentSchemaV4.Type;
+
 const ProjectGoalsDocumentSchemaAnyVersion = Schema.Union([
   ProjectGoalsDocumentSchemaV1,
   ProjectGoalsDocumentSchemaV2,
   ProjectGoalsDocumentSchemaV3,
+  ProjectGoalsDocumentSchemaV4,
   ProjectGoalsDocumentSchema,
 ]);
 
@@ -169,7 +257,7 @@ function createProjectPlanningId(prefix: "goal" | "task" | "subtask"): string {
 
 export function createEmptyProjectGoalsDocument(): ProjectGoalsDocument {
   return {
-    version: 4,
+    version: 5,
     goals: [],
     tasks: [],
   };
@@ -217,6 +305,7 @@ function migrateTask(task: typeof ProjectTaskSchemaV1.Type): ProjectTask {
     description: task.description,
     status: task.status,
     scheduledDate: null,
+    recurrence: null,
     subtasks: task.subtasks.map(migrateSubtask),
     linkedThreadIds: [],
   };
@@ -233,7 +322,7 @@ function migrateGoal(goal: typeof ProjectGoalSchemaV1.Type): ProjectGoal {
 
 function migrateProjectGoalsDocumentV1(doc: ProjectGoalsDocumentV1): ProjectGoalsDocument {
   return {
-    version: 4,
+    version: 5,
     goals: doc.goals.map(migrateGoal),
     tasks: doc.tasks.map(migrateTask),
   };
@@ -246,6 +335,7 @@ function migrateTaskV2(task: ProjectGoalsDocumentV2["tasks"][number]): ProjectTa
     description: task.description,
     status: task.status,
     scheduledDate: null,
+    recurrence: null,
     subtasks: task.subtasks.map(normalizeSubtask),
     linkedThreadIds: [],
   };
@@ -262,7 +352,7 @@ function migrateGoalV2(goal: ProjectGoalsDocumentV2["goals"][number]): ProjectGo
 
 function migrateProjectGoalsDocumentV2(doc: ProjectGoalsDocumentV2): ProjectGoalsDocument {
   return {
-    version: 4,
+    version: 5,
     goals: doc.goals.map(migrateGoalV2),
     tasks: doc.tasks.map(migrateTaskV2),
   };
@@ -275,6 +365,7 @@ function migrateTaskV3(task: ProjectGoalsDocumentV3["tasks"][number]): ProjectTa
     description: task.description,
     status: task.status,
     scheduledDate: null,
+    recurrence: null,
     subtasks: task.subtasks.map(normalizeSubtask),
     linkedThreadIds: task.linkedThreadIds,
   };
@@ -291,9 +382,39 @@ function migrateGoalV3(goal: ProjectGoalsDocumentV3["goals"][number]): ProjectGo
 
 function migrateProjectGoalsDocumentV3(doc: ProjectGoalsDocumentV3): ProjectGoalsDocument {
   return {
-    version: 4,
+    version: 5,
     goals: doc.goals.map(migrateGoalV3),
     tasks: doc.tasks.map(migrateTaskV3),
+  };
+}
+
+function migrateTaskV4(task: ProjectGoalsDocumentV4["tasks"][number]): ProjectTask {
+  return {
+    id: task.id,
+    title: task.title,
+    description: task.description,
+    status: task.status,
+    scheduledDate: task.scheduledDate,
+    recurrence: null,
+    subtasks: task.subtasks.map(normalizeSubtask),
+    linkedThreadIds: task.linkedThreadIds,
+  };
+}
+
+function migrateGoalV4(goal: ProjectGoalsDocumentV4["goals"][number]): ProjectGoal {
+  return {
+    id: goal.id,
+    name: goal.name,
+    status: goal.status,
+    tasks: goal.tasks.map(migrateTaskV4),
+  };
+}
+
+function migrateProjectGoalsDocumentV4(doc: ProjectGoalsDocumentV4): ProjectGoalsDocument {
+  return {
+    version: 5,
+    goals: doc.goals.map(migrateGoalV4),
+    tasks: doc.tasks.map(migrateTaskV4),
   };
 }
 
@@ -313,12 +434,21 @@ function normalizeTask(task: ProjectTask): ProjectTask {
         .filter((threadId) => threadId.length > 0),
     ),
   ).toSorted((left, right) => left.localeCompare(right));
+  const recurrence =
+    task.recurrence === null || task.recurrence === undefined
+      ? null
+      : normalizeProjectTaskRecurrence(task.recurrence);
+  const scheduledDate = recurrence ? null : task.scheduledDate ?? null;
+  if (recurrence && task.scheduledDate !== null && task.scheduledDate !== undefined) {
+    throw new Error("Recurring tasks must not include a one-time scheduled date.");
+  }
   return {
     id: task.id,
     title: task.title,
     description: task.description,
     status: task.status,
-    scheduledDate: task.scheduledDate ?? null,
+    scheduledDate,
+    recurrence,
     subtasks: task.subtasks.map(normalizeSubtask),
     linkedThreadIds,
   };
@@ -336,7 +466,7 @@ function normalizeGoal(goal: ProjectGoal): ProjectGoal {
 export function normalizeProjectGoalsDocument(doc: ProjectGoalsDocument): ProjectGoalsDocument {
   const decoded = Schema.decodeUnknownSync(ProjectGoalsDocumentSchema)(doc);
   return {
-    version: 4,
+    version: 5,
     goals: [...decoded.goals].map(normalizeGoal).toSorted(compareByStatusAndName),
     tasks: [...decoded.tasks].map(normalizeTask).toSorted(compareByStatusAndTitle),
   };
@@ -367,7 +497,9 @@ export function parseProjectGoalsDocument(raw: string | null): ProjectGoalsDocum
           ? migrateProjectGoalsDocumentV2(decoded)
           : decoded.version === 3
             ? migrateProjectGoalsDocumentV3(decoded)
-          : decoded;
+            : decoded.version === 4
+              ? migrateProjectGoalsDocumentV4(decoded)
+              : decoded;
     return normalizeProjectGoalsDocument(migrated);
   } catch (error) {
     throw new ProjectGoalsDocumentParseError(
@@ -433,7 +565,7 @@ export function groupStandaloneTasksByStatus(
   },
 ): Array<ProjectGoalsGroup<ProjectTask>> {
   return groupTaskItemsByStatus(
-    [...tasks].map(normalizeTask).toSorted((left, right) => left.title.localeCompare(right.title) || left.id.localeCompare(right.id)),
+    [...tasks].map(normalizeTask).toSorted(compareByStatusAndTitle),
     (task) => task.status,
     options,
   );
@@ -455,6 +587,7 @@ export function createTask(input?: Partial<ProjectTask>): ProjectTask {
     description: input?.description ?? "",
     status: input?.status ?? "planning",
     scheduledDate: input?.scheduledDate ?? null,
+    recurrence: input?.recurrence ?? null,
     subtasks: input?.subtasks ?? [],
     linkedThreadIds: input?.linkedThreadIds ?? [],
   });
@@ -692,6 +825,46 @@ export function detachThreadFromTaskInDocument(
     ...task,
     linkedThreadIds: task.linkedThreadIds.filter((entry) => entry !== normalizedThreadId),
   }));
+}
+
+export function completeTaskOccurrenceInDocument(
+  doc: ProjectGoalsDocument,
+  taskId: string,
+  occurrenceDate: string,
+): ProjectGoalsDocument | null {
+  return updateTask(doc, taskId, (task) => {
+    if (task.recurrence === null) {
+      return task;
+    }
+    return {
+      ...task,
+      recurrence: normalizeProjectTaskRecurrence({
+        ...task.recurrence,
+        completionDates: [...task.recurrence.completionDates, occurrenceDate],
+      }),
+    };
+  });
+}
+
+export function uncompleteTaskOccurrenceInDocument(
+  doc: ProjectGoalsDocument,
+  taskId: string,
+  occurrenceDate: string,
+): ProjectGoalsDocument | null {
+  return updateTask(doc, taskId, (task) => {
+    if (task.recurrence === null) {
+      return task;
+    }
+    return {
+      ...task,
+      recurrence: normalizeProjectTaskRecurrence({
+        ...task.recurrence,
+        completionDates: task.recurrence.completionDates.filter(
+          (entry) => entry !== occurrenceDate,
+        ),
+      }),
+    };
+  });
 }
 
 export function isThreadLinkedToTask(task: ProjectTask, threadId: string): boolean {

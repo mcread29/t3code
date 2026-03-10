@@ -185,6 +185,10 @@ export function createWsNativeApi(): NativeApi {
       createTask: (input) => transport.request(WS_METHODS.projectPlanningCreateTask, input),
       updateTask: (input) => transport.request(WS_METHODS.projectPlanningUpdateTask, input),
       deleteTask: (input) => transport.request(WS_METHODS.projectPlanningDeleteTask, input),
+      completeTaskOccurrence: (input) =>
+        transport.request(WS_METHODS.projectPlanningCompleteTaskOccurrence, input),
+      uncompleteTaskOccurrence: (input) =>
+        transport.request(WS_METHODS.projectPlanningUncompleteTaskOccurrence, input),
       attachThreadToTask: (input) =>
         transport.request(WS_METHODS.projectPlanningAttachThreadToTask, input),
       detachThreadFromTask: (input) =>

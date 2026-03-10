@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { PanelLeftIcon, PlusIcon } from "lucide-react";
 import React from "react";
 
+import type { ProjectCalendarTaskItem } from "~/lib/taskCalendar";
 import { Button } from "../ui/button";
 import {
   Sheet,
@@ -17,6 +18,7 @@ import ProjectOverviewContent from "./ProjectOverviewContent";
 import ProjectOverviewSidebar from "./ProjectOverviewSidebar";
 
 export type ProjectOverviewSection =
+  | { kind: "calendar" }
   | { kind: "standalone-tasks" }
   | { kind: "goal"; goalId: string };
 
@@ -29,6 +31,7 @@ export interface ProjectOverviewLayoutProps {
     goalId?: string;
     taskId?: string;
   };
+  showCalendarEntry: boolean;
   subtitle: string;
   threadProjectId: ProjectId;
   title: string;
@@ -41,6 +44,7 @@ export default function ProjectOverviewLayout({
   navigationLabel = "Project navigation",
   projectId,
   search = {},
+  showCalendarEntry,
   subtitle,
   threadProjectId,
   title,
@@ -63,6 +67,10 @@ export default function ProjectOverviewLayout({
   const goals = projectGoalsQuery.data?.document.goals;
   const queryClient = useQueryClient();
 
+  const selectCalendar = React.useCallback(() => {
+    setActiveSection({ kind: "calendar" });
+    setMobileSidebarOpen(false);
+  }, []);
   const selectStandaloneTasks = React.useCallback(() => {
     setActiveSection({ kind: "standalone-tasks" });
     setMobileSidebarOpen(false);
@@ -70,6 +78,9 @@ export default function ProjectOverviewLayout({
   const selectGoal = React.useCallback((goalId: string) => {
     setActiveSection({ kind: "goal", goalId });
     setMobileSidebarOpen(false);
+  }, []);
+  const selectCalendarTask = React.useCallback((task: ProjectCalendarTaskItem) => {
+    setActiveSection(task.goalId ? { kind: "goal", goalId: task.goalId } : { kind: "standalone-tasks" });
   }, []);
 
   React.useEffect(() => {
@@ -116,6 +127,7 @@ export default function ProjectOverviewLayout({
 
   let content: React.ReactNode;
   switch (activeSection.kind) {
+    case "calendar":
     case "standalone-tasks":
     case "goal":
       content = (
@@ -125,6 +137,7 @@ export default function ProjectOverviewLayout({
           {...(highlightedTaskId ? { highlightedTaskId } : {})}
           loadingLabel={loadingLabel}
           onGoalEditorOpenChange={setGoalEditorOpen}
+          onOpenCalendarTask={selectCalendarTask}
           onTaskEditorOpenChange={setTaskEditorOpen}
           projectId={projectId}
           taskEditorOpen={taskEditorOpen}
@@ -155,9 +168,11 @@ export default function ProjectOverviewLayout({
             <ProjectOverviewSidebar
               activeSection={activeSection}
               goals={goals ?? []}
+              onSelectCalendar={selectCalendar}
               onSelectGoal={selectGoal}
               onSelectStandaloneTasks={selectStandaloneTasks}
               orientation="vertical"
+              showCalendarEntry={showCalendarEntry}
             />
           </div>
         </SheetPopup>
@@ -218,9 +233,11 @@ export default function ProjectOverviewLayout({
               activeSection={activeSection}
               collapsed={!desktopSidebarExpanded}
               goals={goals ?? []}
+              onSelectCalendar={selectCalendar}
               onSelectGoal={selectGoal}
               onSelectStandaloneTasks={selectStandaloneTasks}
               orientation="vertical"
+              showCalendarEntry={showCalendarEntry}
             />
           </aside>
 

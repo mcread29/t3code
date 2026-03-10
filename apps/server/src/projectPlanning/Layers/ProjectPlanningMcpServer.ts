@@ -23,6 +23,60 @@ export function readManagedProjectPlanningMcpUrl(): string | undefined {
 const toolDescription = (entity: string) =>
   `Manage project planning ${entity}. Prefer this tool over editing .t3code/project-goals.json directly.`;
 
+const recurrenceWeekdaySchema = z.enum([
+  "sunday",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+]);
+
+const recurrenceOrdinalSchema = z.enum(["first", "second", "third", "fourth", "last"]);
+
+const recurrenceRuleSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("daily"),
+    interval: z.number().int().min(1),
+  }),
+  z.object({
+    kind: z.literal("weekly"),
+    interval: z.number().int().min(1),
+    weekdays: z.array(recurrenceWeekdaySchema),
+  }),
+  z.object({
+    kind: z.literal("monthly-day"),
+    interval: z.number().int().min(1),
+    dayOfMonth: z.number().int().min(1).max(31),
+  }),
+  z.object({
+    kind: z.literal("monthly-ordinal-weekday"),
+    interval: z.number().int().min(1),
+    ordinal: recurrenceOrdinalSchema,
+    weekday: recurrenceWeekdaySchema,
+  }),
+  z.object({
+    kind: z.literal("yearly-date"),
+    interval: z.number().int().min(1),
+    month: z.number().int().min(1).max(12),
+    dayOfMonth: z.number().int().min(1).max(31),
+  }),
+  z.object({
+    kind: z.literal("yearly-ordinal-weekday"),
+    interval: z.number().int().min(1),
+    month: z.number().int().min(1).max(12),
+    ordinal: recurrenceOrdinalSchema,
+    weekday: recurrenceWeekdaySchema,
+  }),
+]);
+
+const recurrenceSchema = z.object({
+  startDate: z.string(),
+  rule: recurrenceRuleSchema,
+  completionDates: z.array(z.string()),
+});
+
 function formatToolText(result: unknown): string {
   return JSON.stringify(result, null, 2);
 }
@@ -173,6 +227,8 @@ export const ProjectPlanningMcpServerLive = Layer.effect(
                   status: z
                     .enum(["working", "scheduled", "planning", "done", "archived"])
                     .optional(),
+                  scheduledDate: z.string().optional(),
+                  recurrence: recurrenceSchema.nullable().optional(),
                 },
               },
               async (input) => {
@@ -199,6 +255,8 @@ export const ProjectPlanningMcpServerLive = Layer.effect(
                   status: z
                     .enum(["working", "scheduled", "planning", "done", "archived"])
                     .optional(),
+                  scheduledDate: z.string().nullable().optional(),
+                  recurrence: recurrenceSchema.nullable().optional(),
                 },
               },
               async (input) => {
@@ -224,6 +282,50 @@ export const ProjectPlanningMcpServerLive = Layer.effect(
               },
               async (input) => {
                 const result = await Effect.runPromise(projectPlanning.deleteTask(input));
+                return {
+                  content: [{ type: "text", text: formatToolText(result) }],
+                  structuredContent: result,
+                  isError: result.type === "error",
+                };
+              },
+            );
+
+            server.registerTool(
+              "project_planning_complete_task_occurrence",
+              {
+                description: toolDescription("task recurrence completions"),
+                inputSchema: {
+                  projectId: z.string().optional(),
+                  workspaceRoot: z.string().optional(),
+                  expectedRevision: z.string().optional(),
+                  taskId: z.string(),
+                  occurrenceDate: z.string(),
+                },
+              },
+              async (input) => {
+                const result = await Effect.runPromise(projectPlanning.completeTaskOccurrence(input));
+                return {
+                  content: [{ type: "text", text: formatToolText(result) }],
+                  structuredContent: result,
+                  isError: result.type === "error",
+                };
+              },
+            );
+
+            server.registerTool(
+              "project_planning_uncomplete_task_occurrence",
+              {
+                description: toolDescription("task recurrence completions"),
+                inputSchema: {
+                  projectId: z.string().optional(),
+                  workspaceRoot: z.string().optional(),
+                  expectedRevision: z.string().optional(),
+                  taskId: z.string(),
+                  occurrenceDate: z.string(),
+                },
+              },
+              async (input) => {
+                const result = await Effect.runPromise(projectPlanning.uncompleteTaskOccurrence(input));
                 return {
                   content: [{ type: "text", text: formatToolText(result) }],
                   structuredContent: result,

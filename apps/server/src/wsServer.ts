@@ -886,6 +886,16 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         return yield* projectPlanning.deleteTask(body);
       }
 
+      case WS_METHODS.projectPlanningCompleteTaskOccurrence: {
+        const body = stripRequestTag(request.body);
+        return yield* projectPlanning.completeTaskOccurrence(body);
+      }
+
+      case WS_METHODS.projectPlanningUncompleteTaskOccurrence: {
+        const body = stripRequestTag(request.body);
+        return yield* projectPlanning.uncompleteTaskOccurrence(body);
+      }
+
       case WS_METHODS.projectPlanningAttachThreadToTask: {
         const body = stripRequestTag(request.body);
         return yield* projectPlanning.attachThreadToTask(body);

@@ -49,6 +49,7 @@ import type {
 } from "./orchestration";
 import type {
   ProjectPlanningAttachThreadToTaskInput,
+  ProjectPlanningCompleteTaskOccurrenceInput,
   ProjectPlanningCreateGoalInput,
   ProjectPlanningCreateSubtaskInput,
   ProjectPlanningCreateTaskInput,
@@ -59,6 +60,7 @@ import type {
   ProjectPlanningGetSnapshotInput,
   ProjectPlanningMutationResult,
   ProjectPlanningSnapshotResult,
+  ProjectPlanningUncompleteTaskOccurrenceInput,
   ProjectPlanningUpdateGoalInput,
   ProjectPlanningUpdateSubtaskInput,
   ProjectPlanningUpdateTaskInput,
@@ -157,6 +159,12 @@ export interface NativeApi {
     createTask: (input: ProjectPlanningCreateTaskInput) => Promise<ProjectPlanningMutationResult>;
     updateTask: (input: ProjectPlanningUpdateTaskInput) => Promise<ProjectPlanningMutationResult>;
     deleteTask: (input: ProjectPlanningDeleteTaskInput) => Promise<ProjectPlanningMutationResult>;
+    completeTaskOccurrence: (
+      input: ProjectPlanningCompleteTaskOccurrenceInput,
+    ) => Promise<ProjectPlanningMutationResult>;
+    uncompleteTaskOccurrence: (
+      input: ProjectPlanningUncompleteTaskOccurrenceInput,
+    ) => Promise<ProjectPlanningMutationResult>;
     attachThreadToTask: (
       input: ProjectPlanningAttachThreadToTaskInput,
     ) => Promise<ProjectPlanningMutationResult>;

@@ -4,7 +4,10 @@ import {
   formatScheduledDate,
   getLocalIsoDate,
   getScheduledTaskLabel,
+  getTaskRecurrenceSummary,
+  getTaskScheduleLabel,
   isScheduledTaskOverdue,
+  isTaskOverdue,
 } from "./taskSchedule";
 
 describe("taskSchedule", () => {
@@ -50,5 +53,36 @@ describe("taskSchedule", () => {
         today: "2026-03-10",
       }),
     ).toBe("Overdue Mar 9, 2026");
+  });
+
+  it("renders recurring task labels and summaries", () => {
+    const task = {
+      id: "task_1",
+      title: "Backup",
+      description: "",
+      status: "working" as const,
+      scheduledDate: null,
+      recurrence: {
+        startDate: "2026-03-10",
+        rule: {
+          kind: "weekly" as const,
+          interval: 1,
+          weekdays: ["tuesday"] as const,
+        },
+        completionDates: [],
+      },
+      subtasks: [],
+      linkedThreadIds: [],
+    };
+
+    expect(
+      getTaskScheduleLabel({
+        task,
+        locale: "en-US",
+        today: "2026-03-10",
+      }),
+    ).toBe("Next Mar 10, 2026");
+    expect(getTaskRecurrenceSummary(task)).toBe("Every week on Tue");
+    expect(isTaskOverdue({ task, today: "2026-03-11" })).toBe(true);
   });
 });

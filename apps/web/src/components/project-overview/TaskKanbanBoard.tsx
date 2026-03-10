@@ -32,7 +32,11 @@ interface TaskKanbanBoardProps<TItem> {
     title: string;
     description: string;
   };
-  renderTask: (item: TItem, status: ProjectGoalStatus) => React.ReactNode;
+  renderTask: (
+    item: TItem,
+    status: ProjectGoalStatus,
+    layoutMode: "columns" | "stacked",
+  ) => React.ReactNode;
   alwaysShowBoard?: boolean;
   showSummary?: boolean;
 }
@@ -121,7 +125,7 @@ export default function TaskKanbanBoard<TItem>({
             No tasks
           </div>
         ) : (
-          group.items.map((item) => renderTask(item, group.status))
+          group.items.map((item) => renderTask(item, group.status, layoutMode))
         )}
       </div>
     </section>

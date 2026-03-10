@@ -41,6 +41,7 @@ export default function RootPlanningOverview() {
       loadingLabel="Loading home goals..."
       navigationLabel="Home navigation"
       projectId={null}
+      showCalendarEntry
       subtitle={planningRoot}
       threadProjectId={matchedProject.id}
       title={title}

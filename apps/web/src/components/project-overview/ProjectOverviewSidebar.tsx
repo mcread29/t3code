@@ -1,4 +1,4 @@
-import { ListTodoIcon, TargetIcon } from "lucide-react";
+import { CalendarDaysIcon, ListTodoIcon, TargetIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 import type { ProjectGoal } from "~/projectGoals";
@@ -9,16 +9,20 @@ export default function ProjectOverviewSidebar({
   activeSection,
   collapsed = false,
   goals,
+  onSelectCalendar,
   onSelectGoal,
   onSelectStandaloneTasks,
   orientation,
+  showCalendarEntry,
 }: {
   activeSection: ProjectOverviewSection;
   collapsed?: boolean;
   goals: readonly ProjectGoal[];
+  onSelectCalendar: () => void;
   onSelectGoal: (goalId: string) => void;
   onSelectStandaloneTasks: () => void;
   orientation: "horizontal" | "vertical";
+  showCalendarEntry: boolean;
 }) {
   const isHorizontal = orientation === "horizontal";
 
@@ -43,6 +47,22 @@ export default function ProjectOverviewSidebar({
             : "flex flex-col gap-2 p-3",
       )}
     >
+      {showCalendarEntry ? (
+        <button
+          aria-label="Calendar"
+          className={navButtonClassName(activeSection.kind === "calendar")}
+          data-active={activeSection.kind === "calendar"}
+          onClick={onSelectCalendar}
+          title="Calendar"
+          type="button"
+        >
+          <CalendarDaysIcon className="size-4" />
+          {!collapsed || isHorizontal ? (
+            <span className={cn(isHorizontal ? "max-w-48 truncate" : "truncate")}>Calendar</span>
+          ) : null}
+        </button>
+      ) : null}
+
       <button
         aria-label="Tasks"
         className={navButtonClassName(activeSection.kind === "standalone-tasks")}

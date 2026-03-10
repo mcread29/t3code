@@ -43,4 +43,8 @@ export type {
   ProjectSubtaskLocation,
   ProjectTask,
   ProjectTaskLocation,
+  ProjectTaskRecurrenceOrdinal,
+  ProjectTaskRecurrenceRule,
+  ProjectTaskRecurrenceValue as ProjectTaskRecurrence,
+  ProjectTaskRecurrenceWeekday,
 } from "@t3tools/shared/projectGoals";

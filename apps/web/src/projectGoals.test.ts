@@ -22,7 +22,7 @@ describe("projectGoals", () => {
     expect(parseProjectGoalsDocument(null)).toEqual(createEmptyProjectGoalsDocument());
   });
 
-  it("migrates v1 documents to v4 with stable ids", () => {
+  it("migrates v1 documents to v5 with stable ids", () => {
     const document = parseProjectGoalsDocument(
       JSON.stringify({
         version: 1,
@@ -31,12 +31,12 @@ describe("projectGoals", () => {
       }),
     );
 
-    expect(document.version).toBe(4);
+    expect(document.version).toBe(5);
     expect(document.goals[0]?.id).toEqual(expect.any(String));
     expect(document.tasks).toEqual([]);
   });
 
-  it("migrates v2 documents to v4 with empty linked thread ids", () => {
+  it("migrates v2 documents to v5 with empty linked thread ids", () => {
     const document = parseProjectGoalsDocument(
       JSON.stringify({
         version: 2,
@@ -68,14 +68,16 @@ describe("projectGoals", () => {
       }),
     );
 
-    expect(document.version).toBe(4);
+    expect(document.version).toBe(5);
     expect(document.goals[0]?.tasks[0]?.linkedThreadIds).toEqual([]);
     expect(document.goals[0]?.tasks[0]?.scheduledDate).toBeNull();
+    expect(document.goals[0]?.tasks[0]?.recurrence).toBeNull();
     expect(document.tasks[0]?.linkedThreadIds).toEqual([]);
     expect(document.tasks[0]?.scheduledDate).toBeNull();
+    expect(document.tasks[0]?.recurrence).toBeNull();
   });
 
-  it("migrates v3 documents to v4 with null scheduled dates", () => {
+  it("migrates v3 documents to v5 with null scheduled dates", () => {
     const document = parseProjectGoalsDocument(
       JSON.stringify({
         version: 3,
@@ -93,8 +95,9 @@ describe("projectGoals", () => {
       }),
     );
 
-    expect(document.version).toBe(4);
+    expect(document.version).toBe(5);
     expect(document.tasks[0]?.scheduledDate).toBeNull();
+    expect(document.tasks[0]?.recurrence).toBeNull();
   });
 
   it("rejects invalid schema shapes", () => {
@@ -131,6 +134,56 @@ describe("projectGoals", () => {
     ).toThrow(ProjectGoalsDocumentParseError);
   });
 
+  it("rejects recurring tasks that also persist a one-time scheduled date", () => {
+    expect(() =>
+      parseProjectGoalsDocument(
+        JSON.stringify({
+          version: 5,
+          goals: [],
+          tasks: [
+            {
+              id: "task_1",
+              title: "Launch",
+              description: "",
+              status: "planning",
+              scheduledDate: "2026-03-10",
+              recurrence: {
+                startDate: "2026-03-10",
+                rule: {
+                  kind: "daily",
+                  interval: 1,
+                },
+                completionDates: [],
+              },
+              subtasks: [],
+              linkedThreadIds: [],
+            },
+          ],
+        }),
+      ),
+    ).toThrow(ProjectGoalsDocumentParseError);
+  });
+
+  it("normalizes recurrence completion dates", () => {
+    const task = createTask({
+      id: "task_1",
+      title: "Recurring",
+      description: "",
+      status: "planning",
+      recurrence: {
+        startDate: "2026-03-10",
+        rule: {
+          kind: "daily",
+          interval: 2,
+        },
+        completionDates: ["2026-03-14", "2026-03-12", "2026-03-14"],
+      },
+    });
+
+    expect(task.recurrence?.completionDates).toEqual(["2026-03-12", "2026-03-14"]);
+    expect(task.scheduledDate).toBeNull();
+  });
+
   it("serializes deterministically", () => {
     const alphaGoal = createGoal({
       id: "goal_alpha",
@@ -147,7 +200,7 @@ describe("projectGoals", () => {
 
     expect(
       serializeProjectGoalsDocument({
-        version: 4,
+        version: 5,
         goals: [betaGoal, alphaGoal],
         tasks: [
           createTask({
@@ -166,7 +219,7 @@ describe("projectGoals", () => {
           }),
         ],
       }),
-    ).toContain('"version": 4');
+    ).toContain('"version": 5');
   });
 
   it("groups goals by status in the fixed order", () => {
@@ -257,7 +310,7 @@ describe("projectGoals", () => {
   it("normalizes linked thread ids by trimming, deduping, and sorting", () => {
     const document = parseProjectGoalsDocument(
       JSON.stringify({
-        version: 3,
+        version: 4,
         goals: [],
         tasks: [
           {
@@ -281,7 +334,7 @@ describe("projectGoals", () => {
     const goal = createGoal({ id: "goal_1", name: "Goal", status: "planning" });
     const updated = updateGoal(
       {
-        version: 4,
+        version: 5,
         goals: [goal],
         tasks: [],
       },
@@ -296,7 +349,7 @@ describe("projectGoals", () => {
     const task = createTask({ id: "task_1", title: "B", description: "", status: "planning" });
     const updated = updateTask(
       {
-        version: 4,
+        version: 5,
         goals: [],
         tasks: [task],
       },
@@ -314,7 +367,7 @@ describe("projectGoals", () => {
 
   it("attaches and detaches thread ids idempotently", () => {
     const document = {
-      version: 4 as const,
+      version: 5 as const,
       goals: [],
       tasks: [createTask({ id: "task_1", title: "Task", description: "", status: "planning" })],
     };
@@ -356,7 +409,7 @@ describe("projectGoals", () => {
 
   it("finds linked tasks for standalone and goal-scoped tasks", () => {
     const document = {
-      version: 4 as const,
+      version: 5 as const,
       goals: [
         createGoal({
           id: "goal_1",

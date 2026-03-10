@@ -24,6 +24,10 @@
       "types": "./src/projectGoals.ts",
       "import": "./src/projectGoals.ts"
     },
+    "./projectTaskRecurrence": {
+      "types": "./src/projectTaskRecurrence.ts",
+      "import": "./src/projectTaskRecurrence.ts"
+    },
     "./Net": {
       "types": "./src/Net.ts",
       "import": "./src/Net.ts"

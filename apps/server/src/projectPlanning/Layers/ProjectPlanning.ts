@@ -10,6 +10,7 @@ import type {
   ProjectPlanningUpdatedPayload,
 } from "@t3tools/contracts";
 import {
+  completeTaskOccurrenceInDocument,
   attachThreadToTaskInDocument,
   addGoal,
   addStandaloneTask,
@@ -29,6 +30,7 @@ import {
   parseProjectGoalsDocument,
   PROJECT_GOALS_FILE_PATH,
   serializeProjectGoalsDocument,
+  uncompleteTaskOccurrenceInDocument,
   updateGoal,
   updateSubtask,
   updateTask,
@@ -194,7 +196,7 @@ export const ProjectPlanningLive = Layer.effect(
       );
       if (!exists) {
         const document = normalizeProjectGoalsDocument({
-          version: 4,
+          version: 5,
           goals: [],
           tasks: [],
         });
@@ -402,12 +404,22 @@ export const ProjectPlanningLive = Layer.effect(
                 message: `Unknown goal id: ${input.goalId}.`,
               });
             }
-            const task = createTask({
-              title: input.title,
-              description: input.description ?? "",
-              status: input.status ?? "planning",
-              scheduledDate: input.scheduledDate ?? null,
-            });
+            let task;
+            try {
+              task = createTask({
+                title: input.title,
+                description: input.description ?? "",
+                status: input.status ?? "planning",
+                scheduledDate: input.scheduledDate ?? null,
+                recurrence: input.recurrence ?? null,
+              });
+            } catch (error) {
+              return errorResult({
+                code: "invalid_document",
+                entityType: "task",
+                message: error instanceof Error ? error.message : "Invalid recurring task payload.",
+              });
+            }
             const document = input.goalId
               ? addTaskToGoal(state.document, input.goalId, task)
               : addStandaloneTask(state.document, task);
@@ -434,13 +446,24 @@ export const ProjectPlanningLive = Layer.effect(
                 message: `Unknown task id: ${input.taskId}.`,
               });
             }
-            const document = updateTask(state.document, input.taskId, (task) => ({
-              ...task,
-              ...(input.title !== undefined ? { title: input.title } : {}),
-              ...(input.description !== undefined ? { description: input.description } : {}),
-              ...(input.status !== undefined ? { status: input.status } : {}),
-              ...(input.scheduledDate !== undefined ? { scheduledDate: input.scheduledDate } : {}),
-            }));
+            let document = null;
+            try {
+              document = updateTask(state.document, input.taskId, (task) => ({
+                ...task,
+                ...(input.title !== undefined ? { title: input.title } : {}),
+                ...(input.description !== undefined ? { description: input.description } : {}),
+                ...(input.status !== undefined ? { status: input.status } : {}),
+                ...(input.scheduledDate !== undefined ? { scheduledDate: input.scheduledDate } : {}),
+                ...(input.recurrence !== undefined ? { recurrence: input.recurrence } : {}),
+              }));
+            } catch (error) {
+              return errorResult({
+                code: "invalid_document",
+                entityType: "task",
+                entityId: input.taskId,
+                message: error instanceof Error ? error.message : "Invalid recurring task payload.",
+              });
+            }
             if (!document) {
               return errorResult({
                 code: "not_found",
@@ -457,6 +480,100 @@ export const ProjectPlanningLive = Layer.effect(
         Effect.promise(() =>
           mutate(input, input.expectedRevision, async (state) => {
             const document = deleteTask(state.document, input.taskId);
+            if (!document) {
+              return errorResult({
+                code: "not_found",
+                entityType: "task",
+                entityId: input.taskId,
+                message: `Unknown task id: ${input.taskId}.`,
+              });
+            }
+            await writeState(state, document);
+            return successMutation(document, input.taskId);
+          }),
+        ),
+      completeTaskOccurrence: (input) =>
+        Effect.promise(() =>
+          mutate(input, input.expectedRevision, async (state) => {
+            const task = findTaskById(state.document, input.taskId);
+            if (!task) {
+              return errorResult({
+                code: "not_found",
+                entityType: "task",
+                entityId: input.taskId,
+                message: `Unknown task id: ${input.taskId}.`,
+              });
+            }
+            if (task.task.recurrence === null) {
+              return errorResult({
+                code: "invalid_document",
+                entityType: "task",
+                entityId: input.taskId,
+                message: "Task is not recurring.",
+              });
+            }
+            let document = null;
+            try {
+              document = completeTaskOccurrenceInDocument(
+                state.document,
+                input.taskId,
+                input.occurrenceDate,
+              );
+            } catch (error) {
+              return errorResult({
+                code: "invalid_document",
+                entityType: "task",
+                entityId: input.taskId,
+                message: error instanceof Error ? error.message : "Invalid recurring task occurrence.",
+              });
+            }
+            if (!document) {
+              return errorResult({
+                code: "not_found",
+                entityType: "task",
+                entityId: input.taskId,
+                message: `Unknown task id: ${input.taskId}.`,
+              });
+            }
+            await writeState(state, document);
+            return successMutation(document, input.taskId);
+          }),
+        ),
+      uncompleteTaskOccurrence: (input) =>
+        Effect.promise(() =>
+          mutate(input, input.expectedRevision, async (state) => {
+            const task = findTaskById(state.document, input.taskId);
+            if (!task) {
+              return errorResult({
+                code: "not_found",
+                entityType: "task",
+                entityId: input.taskId,
+                message: `Unknown task id: ${input.taskId}.`,
+              });
+            }
+            if (task.task.recurrence === null) {
+              return errorResult({
+                code: "invalid_document",
+                entityType: "task",
+                entityId: input.taskId,
+                message: "Task is not recurring.",
+              });
+            }
+            let document = null;
+            try {
+              document = uncompleteTaskOccurrenceInDocument(
+                state.document,
+                input.taskId,
+                input.occurrenceDate,
+              );
+            } catch (error) {
+              return errorResult({
+                code: "invalid_document",
+                entityType: "task",
+                entityId: input.taskId,
+                message: error instanceof Error ? error.message : "Invalid recurring task occurrence.",
+              });
+            }
             if (!document) {
               return errorResult({
                 code: "not_found",

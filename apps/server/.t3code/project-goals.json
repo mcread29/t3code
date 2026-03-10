@@ -1,13 +1,38 @@
 {
-  "version": 4,
+  "version": 5,
   "goals": [],
   "tasks": [
+    {
+      "id": "task_828ca01d-a731-4ff4-9e25-9e741d91771c",
+      "title": "vacuum couch",
+      "description": "",
+      "status": "working",
+      "scheduledDate": null,
+      "recurrence": {
+        "startDate": "2026-03-11",
+        "rule": {
+          "kind": "weekly",
+          "interval": 1,
+          "weekdays": [
+            "monday",
+            "wednesday",
+            "thursday"
+          ]
+        },
+        "completionDates": [
+          "2026-03-11"
+        ]
+      },
+      "subtasks": [],
+      "linkedThreadIds": []
+    },
     {
       "id": "task_69b82317-277a-447d-9d9d-ef89ddc3be9c",
       "title": "test",
       "description": "",
       "status": "planning",
       "scheduledDate": "2026-03-26",
+      "recurrence": null,
       "subtasks": [],
       "linkedThreadIds": []
     }

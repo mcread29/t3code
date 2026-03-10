@@ -22,6 +22,7 @@ export default function ProjectOverview({
   return (
     <ProjectOverviewLayout
       projectId={project.id}
+      showCalendarEntry
       subtitle={project.cwd}
       threadProjectId={project.id}
       title={project.name}

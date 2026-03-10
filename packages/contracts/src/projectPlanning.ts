@@ -1,5 +1,10 @@
 import { Schema } from "effect";
-import { IsoDate, IsoDateTime, TrimmedNonEmptyString } from "./baseSchemas";
+import {
+  IsoDate,
+  IsoDateTime,
+  PositiveInt,
+  TrimmedNonEmptyString,
+} from "./baseSchemas";
 
 export const ProjectGoalStatus = Schema.Literals([
   "working",
@@ -11,6 +16,74 @@ export const ProjectGoalStatus = Schema.Literals([
 export type ProjectGoalStatus = typeof ProjectGoalStatus.Type;
 
 const ProjectPlanningEntityId = TrimmedNonEmptyString;
+
+export const ProjectPlanningRecurrenceWeekday = Schema.Literals([
+  "sunday",
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+]);
+export type ProjectPlanningRecurrenceWeekday =
+  typeof ProjectPlanningRecurrenceWeekday.Type;
+
+export const ProjectPlanningRecurrenceOrdinal = Schema.Literals([
+  "first",
+  "second",
+  "third",
+  "fourth",
+  "last",
+]);
+export type ProjectPlanningRecurrenceOrdinal =
+  typeof ProjectPlanningRecurrenceOrdinal.Type;
+
+export const ProjectPlanningTaskRecurrenceRule = Schema.Union([
+  Schema.Struct({
+    kind: Schema.Literal("daily"),
+    interval: PositiveInt,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("weekly"),
+    interval: PositiveInt,
+    weekdays: Schema.Array(ProjectPlanningRecurrenceWeekday),
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("monthly-day"),
+    interval: PositiveInt,
+    dayOfMonth: PositiveInt,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("monthly-ordinal-weekday"),
+    interval: PositiveInt,
+    ordinal: ProjectPlanningRecurrenceOrdinal,
+    weekday: ProjectPlanningRecurrenceWeekday,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("yearly-date"),
+    interval: PositiveInt,
+    month: PositiveInt,
+    dayOfMonth: PositiveInt,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("yearly-ordinal-weekday"),
+    interval: PositiveInt,
+    month: PositiveInt,
+    ordinal: ProjectPlanningRecurrenceOrdinal,
+    weekday: ProjectPlanningRecurrenceWeekday,
+  }),
+]);
+export type ProjectPlanningTaskRecurrenceRule =
+  typeof ProjectPlanningTaskRecurrenceRule.Type;
+
+export const ProjectPlanningTaskRecurrence = Schema.Struct({
+  startDate: IsoDate,
+  rule: ProjectPlanningTaskRecurrenceRule,
+  completionDates: Schema.Array(IsoDate),
+});
+export type ProjectPlanningTaskRecurrence =
+  typeof ProjectPlanningTaskRecurrence.Type;
 
 export const ProjectPlanningSubtask = Schema.Struct({
   id: ProjectPlanningEntityId,
@@ -25,6 +98,9 @@ export const ProjectPlanningTask = Schema.Struct({
   description: Schema.String,
   status: ProjectGoalStatus,
   scheduledDate: Schema.NullOr(IsoDate),
+  recurrence: Schema.NullOr(ProjectPlanningTaskRecurrence).pipe(
+    Schema.withDecodingDefault(() => null),
+  ),
   subtasks: Schema.Array(ProjectPlanningSubtask),
   linkedThreadIds: Schema.Array(TrimmedNonEmptyString),
 });
@@ -39,7 +115,7 @@ export const ProjectPlanningGoal = Schema.Struct({
 export type ProjectPlanningGoal = typeof ProjectPlanningGoal.Type;
 
 export const ProjectPlanningDocument = Schema.Struct({
-  version: Schema.Literal(4),
+  version: Schema.Literal(5),
   goals: Schema.Array(ProjectPlanningGoal),
   tasks: Schema.Array(ProjectPlanningTask),
 });
@@ -144,6 +220,7 @@ export const ProjectPlanningCreateTaskInput = Schema.Struct({
   description: Schema.optional(Schema.String),
   status: Schema.optional(ProjectGoalStatus),
   scheduledDate: Schema.optional(IsoDate),
+  recurrence: Schema.optional(Schema.NullOr(ProjectPlanningTaskRecurrence)),
 });
 export type ProjectPlanningCreateTaskInput = typeof ProjectPlanningCreateTaskInput.Type;
 
@@ -155,6 +232,7 @@ export const ProjectPlanningUpdateTaskInput = Schema.Struct({
   description: Schema.optional(Schema.String),
   status: Schema.optional(ProjectGoalStatus),
   scheduledDate: Schema.optional(Schema.NullOr(IsoDate)),
+  recurrence: Schema.optional(Schema.NullOr(ProjectPlanningTaskRecurrence)),
 });
 export type ProjectPlanningUpdateTaskInput = typeof ProjectPlanningUpdateTaskInput.Type;
 
@@ -164,6 +242,24 @@ export const ProjectPlanningDeleteTaskInput = Schema.Struct({
   taskId: ProjectPlanningEntityId,
 });
 export type ProjectPlanningDeleteTaskInput = typeof ProjectPlanningDeleteTaskInput.Type;
+
+export const ProjectPlanningCompleteTaskOccurrenceInput = Schema.Struct({
+  ...ProjectPlanningTarget.fields,
+  ...ProjectPlanningExpectedRevision.fields,
+  taskId: ProjectPlanningEntityId,
+  occurrenceDate: IsoDate,
+});
+export type ProjectPlanningCompleteTaskOccurrenceInput =
+  typeof ProjectPlanningCompleteTaskOccurrenceInput.Type;
+
+export const ProjectPlanningUncompleteTaskOccurrenceInput = Schema.Struct({
+  ...ProjectPlanningTarget.fields,
+  ...ProjectPlanningExpectedRevision.fields,
+  taskId: ProjectPlanningEntityId,
+  occurrenceDate: IsoDate,
+});
+export type ProjectPlanningUncompleteTaskOccurrenceInput =
+  typeof ProjectPlanningUncompleteTaskOccurrenceInput.Type;
 
 export const ProjectPlanningAttachThreadToTaskInput = Schema.Struct({
   ...ProjectPlanningTarget.fields,

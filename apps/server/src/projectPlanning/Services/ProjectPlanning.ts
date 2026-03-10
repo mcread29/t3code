@@ -1,5 +1,6 @@
 import type {
   ProjectPlanningAttachThreadToTaskInput,
+  ProjectPlanningCompleteTaskOccurrenceInput,
   ProjectPlanningCreateGoalInput,
   ProjectPlanningCreateSubtaskInput,
   ProjectPlanningCreateTaskInput,
@@ -10,6 +11,7 @@ import type {
   ProjectPlanningGetSnapshotInput,
   ProjectPlanningMutationResult,
   ProjectPlanningSnapshotResult,
+  ProjectPlanningUncompleteTaskOccurrenceInput,
   ProjectPlanningUpdateGoalInput,
   ProjectPlanningUpdateSubtaskInput,
   ProjectPlanningUpdateTaskInput,
@@ -40,6 +42,12 @@ export interface ProjectPlanningShape {
   ) => Effect.Effect<ProjectPlanningMutationResult>;
   readonly deleteTask: (
     input: ProjectPlanningDeleteTaskInput,
+  ) => Effect.Effect<ProjectPlanningMutationResult>;
+  readonly completeTaskOccurrence: (
+    input: ProjectPlanningCompleteTaskOccurrenceInput,
+  ) => Effect.Effect<ProjectPlanningMutationResult>;
+  readonly uncompleteTaskOccurrence: (
+    input: ProjectPlanningUncompleteTaskOccurrenceInput,
   ) => Effect.Effect<ProjectPlanningMutationResult>;
   readonly attachThreadToTask: (
     input: ProjectPlanningAttachThreadToTaskInput,
