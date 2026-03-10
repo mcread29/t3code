@@ -1435,7 +1435,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
       if (!linkedTaskIds.has(task.id)) {
         options.push({
           id: task.id,
-          label: task.title.trim().length > 0 ? task.title : "Untitled standalone task",
+          label: task.title.trim().length > 0 ? task.title : "Untitled task",
         });
       }
     }

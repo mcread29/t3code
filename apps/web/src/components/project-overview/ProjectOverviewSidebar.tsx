@@ -24,13 +24,13 @@ export default function ProjectOverviewSidebar({
 
   const navButtonClassName = (active: boolean) =>
     cn(
-      "flex items-center gap-2 rounded-lg text-sm outline-hidden ring-sidebar-ring transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground [&_svg]:shrink-0",
+      "flex items-center gap-2 rounded-lg text-sm outline-hidden ring-sidebar-ring transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-2 active:bg-accent active:text-foreground [&_svg]:shrink-0",
       isHorizontal
         ? "h-9 shrink-0 px-3"
         : collapsed
           ? "size-8 justify-center self-center p-0"
           : "w-full px-2.5 py-2 text-left",
-      active ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground" : "text-sidebar-foreground",
+      active ? "bg-accent font-medium text-foreground" : "text-sidebar-foreground",
     );
 
   return (
@@ -44,17 +44,15 @@ export default function ProjectOverviewSidebar({
       )}
     >
       <button
-        aria-label="Standalone Tasks"
+        aria-label="Tasks"
         className={navButtonClassName(activeSection.kind === "standalone-tasks")}
         data-active={activeSection.kind === "standalone-tasks"}
         onClick={onSelectStandaloneTasks}
-        title="Standalone Tasks"
+        title="Tasks"
         type="button"
       >
         <ListTodoIcon className="size-4" />
-        {!collapsed || isHorizontal ? (
-          <span className={cn(isHorizontal ? "max-w-48 truncate" : "truncate")}>Standalone Tasks</span>
-        ) : null}
+        {!collapsed || isHorizontal ? <span className={cn(isHorizontal ? "max-w-48 truncate" : "truncate")}>Tasks</span> : null}
       </button>
 
       {goals.map((goal, goalIndex) => {

@@ -869,6 +869,49 @@ describe("ChatView timeline estimator parity (full app)", () => {
     }
   });
 
+  it("renders Tasks above Projects and activates the workspace route when clicked", async () => {
+    const mounted = await mountChatView({
+      viewport: DEFAULT_VIEWPORT,
+      snapshot: createSnapshotForTargetUser({
+        targetMessageId: "msg-user-target-sidebar-tasks" as MessageId,
+        targetText: "sidebar tasks target",
+      }),
+    });
+
+    try {
+      const tasksButton = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("button")).find(
+            (button) => button.textContent?.trim() === "Tasks",
+          ) as HTMLButtonElement | null,
+        "Unable to find Tasks sidebar button.",
+      );
+      const projectsHeader = await waitForElement(
+        () =>
+          Array.from(document.querySelectorAll("span")).find(
+            (span) => span.textContent?.trim() === "Projects",
+          ) as HTMLSpanElement | null,
+        "Unable to find Projects sidebar header.",
+      );
+
+      expect(
+        tasksButton.compareDocumentPosition(projectsHeader) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      expect(tasksButton.getAttribute("data-active")).toBe("false");
+
+      tasksButton.click();
+
+      await vi.waitFor(
+        () => {
+          expect(tasksButton.getAttribute("data-active")).toBe("true");
+        },
+        { timeout: 8_000, interval: 16 },
+      );
+    } finally {
+      await mounted.cleanup();
+    }
+  });
+
   it("toggles plan mode with Shift+Tab only while the composer is focused", async () => {
     const mounted = await mountChatView({
       viewport: DEFAULT_VIEWPORT,

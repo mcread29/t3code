@@ -130,7 +130,7 @@ describe("projectGoals", () => {
     expect(groups[4]?.items.map((goal) => goal.name)).toEqual(["Archive"]);
   });
 
-  it("groups standalone tasks by status in the fixed order", () => {
+  it("groups tasks by status in the fixed order", () => {
     const groups = groupStandaloneTasksByStatus([
       createTask({ id: "task_backlog", title: "Backlog", description: "", status: "planning" }),
       createTask({ id: "task_soon", title: "Soon", description: "", status: "scheduled" }),

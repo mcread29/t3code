@@ -1148,13 +1148,13 @@ export default function ProjectOverviewContent({
               alwaysShowBoard
               showSummary={false}
               emptyState={{
-                title: "No standalone tasks yet",
-                description: "Use standalone tasks for work that does not belong under a larger goal.",
+                title: "No tasks yet",
+                description: "Use tasks for work that does not belong under a larger goal.",
                 actionLabel: "New Task",
                 onAction: () => setTaskEditorState({ mode: "create", scope: "standalone" }),
               }}
               filteredEmptyState={{
-                title: "No visible standalone tasks",
+                title: "No visible tasks",
                 description: "Archived tasks are hidden. Turn on Show archived to view them.",
               }}
               renderTask={(task) => (

@@ -156,7 +156,7 @@ The Project Overview route subscribes to that push event and invalidates/refetch
 
 - Shared model parses existing v1 files and upgrades them to v2 with IDs on first write.
 - Shared model preserves normalization and authored subtask order.
-- Backend service CRUD works for standalone tasks, goal tasks, and subtasks.
+- Backend service CRUD works for tasks, goal tasks, and subtasks.
 - Backend service returns stable not-found errors for missing goal/task/subtask IDs.
 - Backend service rejects conflicting `expectedRevision`.
 - Backend service serializes concurrent writes to the same project without losing changes.

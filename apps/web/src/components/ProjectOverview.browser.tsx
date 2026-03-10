@@ -104,7 +104,7 @@ describe("ProjectOverview", () => {
     await screen.unmount();
   });
 
-  it("renders standalone tasks and all goals in the project nav", async () => {
+  it("renders tasks and all goals in the project nav", async () => {
     currentNativeApi = buildNativeApi({
       readFile: vi.fn().mockResolvedValue({
         relativePath: ".t3code/project-goals.json",
@@ -136,7 +136,7 @@ describe("ProjectOverview", () => {
 
     const screen = await mountOverview();
 
-    await expect.element(page.getByRole("button", { name: "Standalone Tasks" })).toHaveAttribute(
+    await expect.element(page.getByRole("button", { name: "Tasks" })).toHaveAttribute(
       "data-active",
       "true",
     );
@@ -147,7 +147,7 @@ describe("ProjectOverview", () => {
     await screen.unmount();
   });
 
-  it("switches from standalone tasks to a selected goal without tabs", async () => {
+  it("switches from tasks to a selected goal without tabs", async () => {
     currentNativeApi = buildNativeApi({
       readFile: vi.fn().mockResolvedValue({
         relativePath: ".t3code/project-goals.json",
@@ -224,19 +224,19 @@ describe("ProjectOverview", () => {
 
     const sidebarToggle = page.getByRole("button", { name: "Toggle Sidebar" }).first();
 
-    await expect.element(page.getByRole("button", { name: "Standalone Tasks" })).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Tasks" })).toBeVisible();
     await expect.element(taskBoard()).toHaveAttribute("data-layout", "columns");
     await sidebarToggle.click();
     await expect.element(page.getByText("Sweep dead code")).toBeVisible();
     await expect.element(taskBoard()).toBeVisible();
     await sidebarToggle.click();
-    await expect.element(page.getByRole("button", { name: "Standalone Tasks" })).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Tasks" })).toBeVisible();
     await expect.element(taskBoard()).toHaveAttribute("data-layout", "columns");
 
     await screen.unmount();
   });
 
-  it("hides archived standalone tasks by default and reveals them with the board toggle", async () => {
+  it("hides archived tasks by default and reveals them with the board toggle", async () => {
     currentNativeApi = buildNativeApi({
       readFile: vi.fn().mockResolvedValue({
         relativePath: ".t3code/project-goals.json",
@@ -283,7 +283,7 @@ describe("ProjectOverview", () => {
     await screen.unmount();
   });
 
-  it("stacks standalone task categories vertically when the board is too narrow", async () => {
+  it("stacks task categories vertically when the board is too narrow", async () => {
     await page.viewport(900, 1000);
     currentNativeApi = buildNativeApi({
       readFile: vi.fn().mockResolvedValue({
@@ -480,7 +480,7 @@ describe("ProjectOverview", () => {
     await screen.unmount();
   });
 
-  it("opens the standalone task dialog from the header even when only goals exist", async () => {
+  it("opens the task dialog from the header even when only goals exist", async () => {
     currentNativeApi = buildNativeApi({
       readFile: vi.fn().mockResolvedValue({
         relativePath: ".t3code/project-goals.json",
@@ -559,7 +559,7 @@ describe("ProjectOverview", () => {
     const screen = await mountOverview();
 
     await page.getByRole("button", { name: "Toggle Sidebar" }).click();
-    await expect.element(page.getByRole("button", { name: "Standalone Tasks" })).toBeVisible();
+    await expect.element(page.getByRole("button", { name: "Tasks" })).toBeVisible();
     await expect.element(page.getByRole("button", { name: "Launch beta" })).toBeVisible();
     await page.getByRole("button", { name: "Launch beta" }).click();
     await expect.element(page.getByText("Sweep dead code")).not.toBeInTheDocument();

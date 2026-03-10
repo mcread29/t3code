@@ -1320,6 +1320,29 @@ export default function Sidebar() {
             </Alert>
           </SidebarGroup>
         ) : null}
+        <SidebarGroup className="px-2 pt-2 pb-0">
+          <SidebarMenu>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                size="sm"
+                isActive={isOnWorkspacePlanning}
+                tooltip={
+                  welcome
+                    ? `Tasks and goals for ${welcome.projectName}`
+                    : "Tasks and goals"
+                }
+                className="gap-2 px-2 py-1.5 text-left"
+                onClick={() => {
+                  void navigate({ to: "/" });
+                }}
+              >
+                <ListTodoIcon className="size-3.5 shrink-0" />
+                <span className="flex-1 truncate text-xs font-medium">Tasks</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          </SidebarMenu>
+        </SidebarGroup>
+
         <SidebarGroup className="px-2 py-2">
           <div className="mb-1 flex items-center justify-between px-2">
             <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
@@ -1421,24 +1444,6 @@ export default function Sidebar() {
             onDragCancel={handleProjectDragCancel}
           >
             <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  size="sm"
-                  isActive={isOnWorkspacePlanning}
-                  tooltip={
-                    welcome
-                      ? `Workspace tasks and goals for ${welcome.projectName}`
-                      : "Workspace tasks and goals"
-                  }
-                  className="gap-2 px-2 py-1.5 text-left"
-                  onClick={() => {
-                    void navigate({ to: "/" });
-                  }}
-                >
-                  <ListTodoIcon className="size-3.5 shrink-0" />
-                  <span className="flex-1 truncate text-xs font-medium">Workspace Tasks</span>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
               <SortableContext
                 items={projects.map((project) => project.id)}
                 strategy={verticalListSortingStrategy}
