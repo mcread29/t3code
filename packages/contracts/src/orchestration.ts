@@ -13,6 +13,7 @@ import {
   IsoDateTime,
   MessageId,
   NonNegativeInt,
+  PositiveInt,
   ProjectId,
   ProviderItemId,
   ThreadId,
@@ -24,6 +25,7 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
+  getWorkflowScript: "orchestration.getWorkflowScript",
   getTurnDiff: "orchestration.getTurnDiff",
   getFullThreadDiff: "orchestration.getFullThreadDiff",
   searchThreads: "orchestration.searchThreads",
@@ -438,6 +440,12 @@ export const OrchestrationThreadShell = Schema.Struct({
   hasPendingApprovals: Schema.Boolean,
   hasPendingUserInput: Schema.Boolean,
   hasActionableProposedPlan: Schema.Boolean,
+  /**
+   * Native background work alive after the turn settles: "working" while
+   * subagents/workflows run, "monitoring" when watch loops are the only
+   * live work. Optional so old servers/clients interop; absent = none.
+   */
+  backgroundLiveness: Schema.optional(Schema.NullOr(Schema.Literals(["working", "monitoring"]))),
 });
 export type OrchestrationThreadShell = typeof OrchestrationThreadShell.Type;
 
@@ -518,12 +526,62 @@ export const OrchestrationSubscribeThreadInput = Schema.Struct({
    * snapshot or catch-up replay and before it begins emitting live events.
    */
   requestCompletionMarker: Schema.optionalKey(Schema.Boolean),
+  /**
+   * When provided, the fallback snapshot frame (sent when `afterSequence` is
+   * missing or the catch-up gap is too large) is windowed to the last
+   * `turnLimit` user-anchored turns and carries `page` metadata. Absent means
+   * the fallback snapshot is the full thread, preserving pre-pagination client
+   * behavior. Live events are unaffected either way.
+   */
+  turnLimit: Schema.optionalKey(PositiveInt),
 });
 export type OrchestrationSubscribeThreadInput = typeof OrchestrationSubscribeThreadInput.Type;
+
+/**
+ * Bounds a thread detail read to a window of recent turns. `turnLimit` counts
+ * turns with a user pending message (subagent/fan-out turns between them ride
+ * along), so the window always contains the last N user prompts. `beforeCursor`
+ * requests the disjoint page of older turns strictly before a previously
+ * returned cursor. Requests without a window get the full thread; pagination is
+ * strictly opt-in so older clients keep today's behavior on both HTTP and the
+ * WebSocket fallback snapshot.
+ */
+export const OrchestrationThreadDetailWindow = Schema.Struct({
+  turnLimit: Schema.optionalKey(PositiveInt),
+  beforeCursor: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type OrchestrationThreadDetailWindow = typeof OrchestrationThreadDetailWindow.Type;
+
+/**
+ * Page metadata for a windowed thread detail read. `beforeCursor` is opaque and
+ * exclusive: passing it back returns the adjacent disjoint slice of older
+ * turns. `null` means the thread is fully loaded below this page. The
+ * `snapshotSequence` mirrors the top-level snapshot sequence so history pages
+ * can be sequence-checked against live state before merging.
+ */
+export const OrchestrationThreadDetailPage = Schema.Struct({
+  beforeCursor: Schema.NullOr(TrimmedNonEmptyString),
+  hasMore: Schema.Boolean,
+  snapshotSequence: NonNegativeInt,
+  /**
+   * Highest event sequence applied to THIS thread at page read time. The
+   * global `snapshotSequence` advances with every thread's events, so a
+   * client cannot wait for it via its per-thread subscription; this
+   * thread-scoped watermark is reachable. A client merging an older page
+   * must first have applied live events up to it — otherwise a streaming
+   * turn outside the loaded window could have deltas replayed on top of
+   * page content that already includes them, duplicating text.
+   */
+  threadSequence: Schema.optionalKey(NonNegativeInt),
+});
+export type OrchestrationThreadDetailPage = typeof OrchestrationThreadDetailPage.Type;
 
 export const OrchestrationThreadDetailSnapshot = Schema.Struct({
   snapshotSequence: NonNegativeInt,
   thread: OrchestrationThread,
+  // Present only on windowed responses. Absent on full snapshots (and from
+  // pre-pagination servers), which clients treat as fully loaded.
+  page: Schema.optional(OrchestrationThreadDetailPage),
 });
 export type OrchestrationThreadDetailSnapshot = typeof OrchestrationThreadDetailSnapshot.Type;
 
@@ -1464,10 +1522,62 @@ export const OrchestrationSearchThreadsResult = Schema.Struct({
 });
 export type OrchestrationSearchThreadsResult = typeof OrchestrationSearchThreadsResult.Type;
 
+export const OrchestrationGetWorkflowScriptInput = Schema.Struct({
+  threadId: ThreadId,
+  /** Absolute path from the workflow's runHandles.scriptPath. The server
+   * re-derives containment; the client value is a hint, never trusted. */
+  scriptPath: TrimmedNonEmptyString,
+});
+export type OrchestrationGetWorkflowScriptInput = typeof OrchestrationGetWorkflowScriptInput.Type;
+
+export const OrchestrationGetWorkflowScriptResult = Schema.Struct({
+  scriptPath: TrimmedNonEmptyString,
+  contents: Schema.String,
+  truncated: Schema.Boolean,
+});
+export type OrchestrationGetWorkflowScriptResult = typeof OrchestrationGetWorkflowScriptResult.Type;
+
+const WORKFLOW_SCRIPT_ERROR_MESSAGES = {
+  "invalid-path": "Workflow scripts must be absolute .js paths.",
+  "root-unavailable": "Script root unavailable.",
+  "not-found": "Script not found.",
+  "outside-root": "Script path is outside the workflow scripts root.",
+  "not-js": "Resolved script is not a .js file.",
+  "not-regular-file": "Script is not a regular file.",
+  "changed-during-read": "Script changed between resolution and open.",
+  "read-failed": "Script read failed.",
+} as const;
+
+export class OrchestrationGetWorkflowScriptError extends Schema.TaggedErrorClass<OrchestrationGetWorkflowScriptError>()(
+  "OrchestrationGetWorkflowScriptError",
+  {
+    reason: Schema.Literals([
+      "invalid-path",
+      "root-unavailable",
+      "not-found",
+      "outside-root",
+      "not-js",
+      "not-regular-file",
+      "changed-during-read",
+      "read-failed",
+    ]),
+    scriptPath: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return WORKFLOW_SCRIPT_ERROR_MESSAGES[this.reason];
+  }
+}
+
 export const OrchestrationRpcSchemas = {
   dispatchCommand: {
     input: ClientOrchestrationCommand,
     output: DispatchResult,
+  },
+  getWorkflowScript: {
+    input: OrchestrationGetWorkflowScriptInput,
+    output: OrchestrationGetWorkflowScriptResult,
   },
   getTurnDiff: {
     input: OrchestrationGetTurnDiffInput,
